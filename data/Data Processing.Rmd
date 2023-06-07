@@ -1,0 +1,382 @@
+---
+title: "data_formatting"
+output: html_document
+knit: (function(input, ...) {
+    rmarkdown::render(
+      input,
+      output_dir = "./html-output"
+    )
+  })
+  
+---
+```{r setup}
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+```
+
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(gridExtra)#for arranging plots in a grid
+library(stringr) #to split column containing location and celltype into 2 different ones 
+library(purrr)
+```
+
+1. Raw data, grouping by receptor expression (CD4 or CD8) and tissue (spleen, lymph node, thymus)
+
+```{r}
+renameTime <- function(x){
+rename(x, time = names(x)[[2]])}
+
+```
+
+Loading data from txt files, labeling and renaming 
+```{r}
+names_of_datasets <- c("cell-numbers-all","cell-numbers-YFPpos", "perc Ki67 - all cells", "perc Ki67 - YFPneg cells", "perc Ki67 - YFPpos cells", "perc Ki67 - YFPpos-neg ratio", "perc YFP - precursor product ratios", "perc YFP")
+
+badlines = c(12,13,14,15,16,17,20,21,24,25,47,49,52,55,58,61) # either no TAM, or flu infected, or missing data
+
+saving_data_function <- function(data){
+ x=read.delim(file = paste0("Raw Data - Thea/", data,".txt"))
+ x[-badlines,]
+}
+
+all_data <- sapply(names_of_datasets,saving_data_function,simplify=FALSE) # using sapply instead of map or lapply to keep names and not rename separately 
+all_data <- map(all_data,renameTime) #renaming time column to "time" 
+
+nmice=nrow(all_data[["cell-numbers-all"]])  # should be 45 out of the orig 61
+
+# assign ID to each mouse
+all_data <- map(all_data, ~mutate(.,ID = 1:nmice))
+
+# get mouse demographic info, removing ctrl mice
+demog=read.csv(file = "Raw Data - Thea/MouseAges-Start-End.csv")
+demog=demog[-badlines,]
+if(nrow(demog)!=nmice) stop("Mouse number weirdness!")
+
+# add ID to the Demographic dataset too
+demog$ID = 1:nmice
+
+# define 4 age classes for mice based on age at start of treatment (ordered factors)
+demog$age_class=cut(demog$age_at_start, c(0, 60,80, 100, 1000), labels=c("<60", "60-80", "81-100", ">100"))
+
+# save this for reference
+write_rds(demog, file="DataObjects/Mouse_ID_AgeClass.Rds")
+
+```
+
+
+Here extracting mouseID and ID for match with age: (Eva's code)
+
+```{r}
+ID_mouseID <- map(all_data, ~data.frame(.$ID, .$Mouse))
+save(ID_mouseID, file = "DataObjects/ID_mouseID.Rdata")
+```
+
+
+Sorting by receptor expression, fixing datatype 
+
+```{r}
+all_data_celltype <- map(all_data, ~ pivot_longer(.,names_to = "type",cols = 3:(ncol(.)-1), values_to = "cell_number")) #storing sample information on one long column 
+
+all_data_tissue_celltype <- map(all_data_celltype, ~ data.frame(.$Mouse,.$time,str_split_fixed(.$type, "\\.", 2), .$cell_number, .$ID)) 
+
+renaming2 <- function(x){
+  {names(x) = c("mouse", "time", "tissue","celltype","cell_number", "ID");x}
+}
+
+all_data_tissue_celltype <- map(all_data_tissue_celltype, ~renaming2(.)) 
+
+#tissue, celltype is factor, cell_number, time numeric
+
+change_data_type <- function(data){
+  {data$tissue = as.factor(data$tissue) 
+  data$celltype = as.factor(data$celltype)
+  #data$cell_number = as.integer(data$cell_number)
+  data$cell_number = as.double(data$cell_number)
+  data$time = as.integer(data$time)
+  data$mouse = as.factor(data$mouse)
+  ;data}
+}
+
+all_data_tissue_celltype <- all_data_tissue_celltype %>% map(change_data_type) 
+```
+
+
+```{r}
+grouping <- function(x){
+  x %>% group_by(tissue) %>% group_split(.keep = T)
+} #works great except for losing the tissue names 
+
+all_data_grouped <- map(all_data_tissue_celltype, grouping)
+#all_data_grouped <- map(all_data_grouped, ~names(.) = c("LN", "SP", "TH"))
+
+for(i in 1:5){
+names(all_data_grouped[[i]]) <- c("LN", "SP", "TH")
+}
+
+names(all_data_grouped[[6]]) <- c("LN", "SP")
+for(i in 7:8){
+names(all_data_grouped[[i]]) <- c("LN", "SP", "TH", "other")}
+```
+
+
+```{r}
+splitting_celltype <- function(x){
+  map(c("CD4" = "4","CD8"="8","other" = "other"),function(y) filter(x,grepl(y, x$celltype) ))}
+data_tissue_celltype  <- map_depth(all_data_grouped, 2, ~splitting_celltype(.) )
+```
+
+
+
+```{r}
+CD4_CD8 <- map(c("CD4" = "CD4", "CD8" = "CD8"), function(x) map_depth(data_tissue_celltype,2, function(y) y[[x]]))
+
+#There are missing values which I will here remove, this is not the prettiest way so correct when you find a better solution: 
+CD4_CD8 <- map_depth(CD4_CD8, 2, function(x) map(c("LN" = "LN","SP" = "SP","TH" = "TH"), function(y) x[[y]])) 
+
+#This gave a zero list 
+for (i in c("CD4", "CD8")){
+CD4_CD8[[i]][["perc Ki67 - YFPpos-neg ratio"]] <- list("LN" = CD4_CD8[[i]][["perc Ki67 - YFPpos-neg ratio"]][["LN"]], "SP" = CD4_CD8[[i]][["perc Ki67 - YFPpos-neg ratio"]][["SP"]])
+}
+
+save(CD4_CD8, file =  "DataObjects/CD4_CD8.RData")
+
+```
+
+
+2. Formatting periphery such that cellcounts are added up in the periphery (lymph node + spleen) and frequencies are weighted averages. 
+
+```{r}
+
+tmp <- map_df(all_data_tissue_celltype, ~as.data.frame(.x), .id="data_type")
+
+grouping <- function(x){
+  x %>% group_by(ID) %>% group_split(.keep = T)
+} 
+
+tmp <- grouping(tmp)
+
+names(tmp) <- 1:nmice
+
+grouping <- function(x){
+  x %>% group_by(ID) %>% group_split(.keep = T)
+} 
+
+tmp <- map(tmp, function(x) x%>%  
+             filter(!tissue=="X") %>% 
+             group_by(tissue) %>% 
+             group_split(.keep = T))
+
+tmp <- map(tmp, ~{names(.) = c(unique(.[[1]]$tissue), unique(.[[2]]$tissue), unique(.[[3]]$tissue));.})
+
+tmp <- map_depth(tmp,2, function(x) x %>% group_by(data_type) %>% group_split(.keep=T))
+
+
+names_tmp <- map_depth(tmp, 3, ~unique(.[["data_type"]]))
+
+for (i in 1:nmice){
+         for(j in c("LN", "SP", "TH")){
+           {names(tmp[[i]][[j]]) = names_tmp[[i]][[j]]; tmp[[i]][[j]]}
+         }
+}
+
+#Filtering for naives 
+
+naives_per_mouse <- map_depth(tmp, 3, ~filter(., grepl("nai", celltype))) %>% 
+  map_depth( 3, ~filter(., !grepl("Treg", celltype))) 
+
+split_CD4CD8 <- function(x){
+  x %>% group_by(celltype) %>% group_split(.keep = T) 
+}
+  
+
+```
+
+I sorted by mouse. Now to open up a 'periphery' drop down. For the cell counts that's simply the sum: 
+
+```{r}
+#appending periphery option 
+
+tmp_periphery <- map(naives_per_mouse, ~append(., list(
+  list(data.frame("cell_number_LN" = .[["LN"]][["cell-numbers-all"]][["cell_number"]], "time" = .[["LN"]][["cell-numbers-all"]][["time"]], "celltype" = . [["LN"]][["cell-numbers-all"]][["celltype"]],"cell_number_SP" = .[["SP"]][["cell-numbers-all"]][["cell_number"]]))
+)))
+
+tmp_periphery <- map(tmp_periphery, ~{names(.) = c("LN","SP","TH","periphery");.})
+
+if(nmice != length(tmp_periphery)) stop("something wrong with number of mice")
+
+for(i in 1:nmice){
+   tmp_periphery[[i]][[4]] <- append(tmp_periphery[[i]][[4]], list(data.frame("cell_number_LN" = tmp_periphery[[i]][["LN"]][["cell-numbers-YFPpos"]][["cell_number"]], "time" = tmp_periphery[[i]][["LN"]][["cell-numbers-YFPpos"]][["time"]],"celltype" = tmp_periphery[[i]][["LN"]][["cell-numbers-YFPpos"]][["celltype"]], "cell_number_SP" = tmp_periphery[[i]][["SP"]][["cell-numbers-YFPpos"]][["cell_number"]])))
+}
+
+for(i in 1:nmice){
+{names(tmp_periphery[[i]][["periphery"]]) = c("cell_numbers_all","cell_numbers_YFPpos");tmp_periphery[[i]][["periphery"]]}
+}
+
+```
+
+
+```{r}
+adding_cell_numbers <- function(x){
+k <- x$cell_number_LN+x$cell_number_SP
+return(data.frame("cell_number_tot" = k, "time" = x$time, "celltype" = x$celltype))
+}
+
+added_numbers <- map(tmp_periphery, function(a) map(a$periphery, function(b) adding_cell_numbers(b)  ))
+
+
+```
+
+Percentages of YFP 
+l =( lSP NSP + lLN NLN) / (NSP + NLN)
+
+```{r}
+for(i in 1:nmice){
+   tmp_periphery[[i]][[4]] <- append(tmp_periphery[[i]][[4]], list(data.frame("perc_YFP_LN" = tmp_periphery[[i]][["LN"]][["perc YFP"]][["cell_number"]], "time" = tmp_periphery[[i]][["LN"]][["perc YFP"]][["time"]], "celltype" = tmp_periphery[[i]][["LN"]][["perc YFP"]][["celltype"]], "perc_YFP_SP" = tmp_periphery[[i]][["SP"]][["perc YFP"]][["cell_number"]])))
+}
+
+for(i in 1:nmice){
+{names(tmp_periphery[[i]][["periphery"]]) = c("cell_numbers_all","cell_numbers_YFPpos", "frac_YFP");tmp_periphery[[i]][["periphery"]]}
+}
+
+normalizing_YFP_frac <- function(x){
+k <- (x$cell_numbers_all$cell_number_SP*(x$frac_YFP$perc_YFP_SP*1/100) + x$cell_numbers_all$cell_number_LN*(x$frac_YFP$perc_YFP_LN*1/100))*1/(x$cell_numbers_all$cell_number_SP+x$cell_numbers_all$cell_number_LN)
+return(data.frame("norm_frac_YFP" = k, "time" = x$cell_numbers_YFPpos$time, "celltype" = x$cell_numbers_YFPpos$celltype))
+}
+
+norm_frac <- map(tmp_periphery, ~normalizing_YFP_frac(.$periphery))
+
+```
+
+Merging total data for simple model
+
+```{r}
+final_data_simple_model <- map2(added_numbers, norm_frac, ~ append(.x,list(.y)))
+final_data_simple_model <- map(final_data_simple_model, ~{names(.) <- c("cell_numbers_all", "cell_numbers_YFPpos", "YFP_frac");.})
+
+final_data_simple_model <- map_depth(final_data_simple_model, 2,~split_CD4CD8(.))
+final_data_simple_model <- map_depth(final_data_simple_model, 2, ~{names(.) <- c(unique(.[[1]][["celltype"]]),unique(.[[2]][["celltype"]]) );.})
+
+save(final_data_simple_model, file = "DataObjects/final_data_simple_model.RData")
+```
+
+
+
+#----- Ki67 
+
+For the cell counts thats the sum of the product of %Ki67_YFP and YFP 
+
+```{r}
+#appending periphery option 
+
+for(i in 1:nmice){
+   tmp_periphery[[i]][[4]] <- append(tmp_periphery[[i]][[4]], list(data.frame("perc_Ki67_YFP_LN" = tmp_periphery[[i]][["LN"]][["perc Ki67 - YFPpos cells"]][["cell_number"]], "time" = tmp_periphery[[i]][["LN"]][["perc Ki67 - YFPpos cells"]][["time"]], "celltype" = tmp_periphery[[i]][["LN"]][["perc Ki67 - YFPpos cells"]][["celltype"]], "perc_Ki67_YFP_SP" = tmp_periphery[[i]][["SP"]][["perc Ki67 - YFPpos cells"]][["cell_number"]])))
+}
+
+for(i in 1:nmice){
+{names(tmp_periphery[[i]][["periphery"]]) = c("cell_numbers_all","cell_numbers_YFPpos", "frac_YFP", "frac_Ki67_YFPpos");tmp_periphery[[i]][["periphery"]]}
+}
+
+```
+
+```{r}
+
+adding_cell_numbers_Ki67 <- function(x){
+k <- (x$cell_numbers_YFPpos$cell_number_SP*(x$frac_Ki67_YFPpos$perc_Ki67_YFP_SP*1/100) + x$cell_numbers_YFPpos$cell_number_LN*(x$frac_Ki67_YFPpos$perc_Ki67_YFP_LN*1/100))
+m <- (x$cell_numbers_YFPpos$cell_number_SP*(1-x$frac_Ki67_YFPpos$perc_Ki67_YFP_SP*1/100) + x$cell_numbers_YFPpos$cell_number_LN*(1-x$frac_Ki67_YFPpos$perc_Ki67_YFP_LN*1/100))
+return(list(data.frame("abs_Ki67hi_YFP" = k,"abs_Ki67lo_YFP" = m, "time" = x$cell_numbers_YFPpos$time, "celltype" = x$cell_numbers_YFPpos$celltype)))
+}
+
+added_numbers_Ki67<- map(tmp_periphery, ~adding_cell_numbers_Ki67(.$periphery))
+added_numbers_Ki67 <- map(added_numbers_Ki67, ~{names(.) = c("cell_numbers_Ki67_YFP");. })
+
+```
+
+
+#-------- Ki67 fraction
+
+Percentages of Ki67 in YFP 
+l =( lSP NSP + lLN NLN) / (NSP + NLN)
+
+with N being YFP population 
+
+```{r}
+
+normalizing_Ki67_YFP_frac <- function(x){
+k <- (x$cell_numbers_YFPpos$cell_number_SP*(x$frac_Ki67_YFPpos$perc_Ki67_YFP_SP*1/100) + x$cell_numbers_YFPpos$cell_number_LN*(x$frac_Ki67_YFPpos$perc_Ki67_YFP_LN*1/100))*1/(x$cell_numbers_YFPpos$cell_number_SP+x$cell_numbers_YFPpos$cell_number_LN)
+return(data.frame("norm_frac_Ki67_YFP" = k, "time" = x$cell_numbers_YFPpos$time, "celltype" = x$cell_numbers_YFPpos$celltype))
+}
+
+norm_frac_Ki67_YFP <- map(tmp_periphery, ~normalizing_Ki67_YFP_frac(.$periphery))
+
+```
+
+
+Merging total data for flow model
+
+```{r}
+final_data_flow_model <- map2(added_numbers_Ki67, norm_frac_Ki67_YFP, ~ append(.x,list(.y)))
+final_data_flow_model <- map2(final_data_flow_model, added_numbers, ~ append(.x,.y))
+final_data_flow_model <- map(final_data_flow_model, ~{names(.) <- c("cell_numbers_Ki67_YFPpos", "Ki67_YFP_frac", "cell_numbers_all", "cell_numbers_YFPpos");.})
+final_data_flow_model <- map_depth(final_data_flow_model, 2,~split_CD4CD8(.))
+final_data_flow_model <- map_depth(final_data_flow_model, 2, ~{names(.) <- c(unique(.[[1]][["celltype"]]),unique(.[[2]][["celltype"]]) );.})
+
+save(final_data_flow_model, file = "DataObjects/final_data_flow_model.RData")
+```
+
+Adding Ki67 in general population for Ki67 graph 
+
+#-------- Ki67 fraction
+
+Percentages of Ki67 in general population 
+l =( lSP NSP + lLN NLN) / (NSP + NLN)
+
+with N being general population 
+
+```{r}
+tmp_periphery_v2 <- tmp_periphery
+
+#appending periphery option 
+
+
+for(i in 1:nmice){
+   tmp_periphery_v2[[i]][[4]] <- append(tmp_periphery_v2[[i]][[4]], list(data.frame("perc_Ki67_LN" = tmp_periphery[[i]][["LN"]][["perc Ki67 - all cells"]][["cell_number"]], "time" = tmp_periphery[[i]][["LN"]][["perc Ki67 - all cells"]][["time"]], "celltype" = tmp_periphery[[i]][["LN"]][["perc Ki67 - all cells"]][["celltype"]], "perc_Ki67_SP" = tmp_periphery[[i]][["SP"]][["perc Ki67 - all cells"]][["cell_number"]])))
+}
+
+for(i in 1:nmice){
+{names(tmp_periphery_v2[[i]][["periphery"]]) = c("cell_numbers_all","cell_numbers_YFPpos", "frac_YFP", "frac_Ki67_YFPpos", "frac_Ki67");tmp_periphery_v2[[i]][["periphery"]]}
+}
+
+```
+
+
+```{r}
+
+normalizing_Ki67_frac <- function(x){
+k <- (x$cell_numbers_all$cell_number_SP*(x$frac_Ki67$perc_Ki67_SP*1/100) + x$cell_numbers_all$cell_number_LN*(x$frac_Ki67$perc_Ki67_LN*1/100))*1/(x$cell_numbers_all$cell_number_SP+x$cell_numbers_all$cell_number_LN)
+return(data.frame("norm_frac_Ki67" = k, "time" = x$cell_numbers_all$time, "celltype" = x$cell_numbers_all$celltype))
+}
+
+norm_frac_Ki67 <- map(tmp_periphery_v2, ~normalizing_Ki67_frac(.$periphery))
+
+```
+
+Merging total data for flow model
+
+```{r}
+final_data_flow_model_v2 <- map2(added_numbers_Ki67, norm_frac_Ki67_YFP, ~ append(.x,list(.y)))
+final_data_flow_model_v2 <- map2(final_data_flow_model_v2, norm_frac_Ki67, ~ append(.x,list(.y)))
+final_data_flow_model_v2 <- map2(final_data_flow_model_v2, added_numbers, ~ append(.x,.y))
+final_data_flow_model_v2 <- map(final_data_flow_model_v2, ~{names(.) <- c("cell_numbers_Ki67_YFPpos", "Ki67_YFP_frac", "Ki67_frac", "cell_numbers_all", "cell_numbers_YFPpos");.})
+final_data_flow_model_v2 <- map_depth(final_data_flow_model_v2, 2,~split_CD4CD8(.))
+final_data_flow_model_v2 <- map_depth(final_data_flow_model_v2, 2, ~{names(.) <- c(unique(.[[1]][["celltype"]]),unique(.[[2]][["celltype"]]) );.})
+
+save(final_data_flow_model_v2, file = "DataObjects/final_data_flow_model_v2.RData")
+```
+
+```{r}
+# clear up everything but products
+rm(list=setdiff(ls(), c("CD4_CD8","demog", "final_data_simple_model","final_data_flow_model","final_data_flow_model_v2"))) #Final products
+```
+
+

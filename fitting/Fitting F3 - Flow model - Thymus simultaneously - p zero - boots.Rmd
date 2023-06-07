@@ -1,0 +1,275 @@
+---
+title: "flow_model_together"
+output: html_document
+knit: (function(input, ...) {
+    rmarkdown::render(
+      input,
+      output_dir = "./html-output"
+    )
+  })
+---
+
+```{r setup}
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+```
+
+```{r}
+load(file =  "../data/DataObjects/CD4_CD8.RData")
+load(file = "../data/DataObjects/final_data_flow_model.RData")
+
+#load("flow_model_together.RData")
+
+packages <- c("tidyverse", "ggplot2") 
+
+tmp=lapply(packages, require, character.only = TRUE)
+
+source("grind.R")
+
+nboots=500
+```
+
+Combining data: 
+
+1. Thymus data - mSP YFP+ numbers, and perc Ki67 of YFP+. Combine into one dataset.
+
+```{r}
+
+# this is code modified from Fitting C - only now we keep Y in it too.
+# make a dataframe with Kplus, Y, time, ID
+
+cell_numbers_YFPmSP <- map(CD4_CD8, function(a) filter(a[["cell-numbers-YFPpos"]][["TH"]], grepl("mat", celltype)))
+perc_Ki67_YFPmSP <- map(CD4_CD8, function(a) filter(a[["perc Ki67 - YFPpos cells"]][["TH"]], grepl("mat", celltype)))
+Y.and.Kplus.for.fitting <- map2(cell_numbers_YFPmSP, perc_Ki67_YFPmSP, ~ merge(.x,.y, by = c("mouse", "time", "ID", "celltype", "tissue"))) %>%
+    map(~mutate(.,Y = cell_number.x )) %>%
+    map(~mutate(.,fraction_Ki67 = cell_number.y/100)) %>%
+    map(~select(., c("time", "Y", "fraction_Ki67", "ID")))
+
+# clean it up a bit ...  We should be left with time-4, Ki67+YFP+ number, YFP+ number.
+for(i in c("CD4", "CD8")){
+  Y.and.Kplus.for.fitting[[i]]=  Y.and.Kplus.for.fitting[[i]] %>%
+    mutate(Kplus = Y*fraction_Ki67) %>%
+    mutate(time=time-4) %>%
+    filter(time>=0) %>%
+    select(-c(fraction_Ki67))
+  # set zeros to half lowest value
+  lowest.nonzero.Kplus=min(filter(Y.and.Kplus.for.fitting[[i]], Kplus>0)$Kplus)
+  Y.and.Kplus.for.fitting[[i]]$Kplus[Y.and.Kplus.for.fitting[[i]]$Kplus<lowest.nonzero.Kplus] =0.5*lowest.nonzero.Kplus
+  }
+
+```
+
+```{r}
+
+# Now gather data in periphery - from Fitting D 
+
+test <- map_depth(final_data_flow_model, 2,~do.call(rbind,.) )
+N.and.lp <- map(test, ~merge(.[["Ki67_YFP_frac"]], .[["cell_numbers_YFPpos"]], by = c("time", "celltype")))
+N.and.lp <- map2(N.and.lp, names(N.and.lp), ~ mutate(.x, ID = .y))
+test <- do.call(rbind,N.and.lp)
+N.and.lp <- test %>% group_by(celltype) %>% group_split()
+names(N.and.lp) <- c("CD4", "CD8")
+
+N.and.lp <- map(N.and.lp, ~ mutate(., lp = norm_frac_Ki67_YFP, .keep = "unused")%>% 
+                          mutate(., N = cell_number_tot, .keep = "unused") )
+
+load("../data/DataObjects/ID_mouseID.Rdata")
+ID_mouseID <- ID_mouseID[[1]] # just choose one of them
+colnames(ID_mouseID) <- c("ID", "MouseID") # ID is the one we want (1...45)
+
+N.and.lp <- map(N.and.lp, ~merge(., ID_mouseID, by = "ID"))
+N.and.lp = map(N.and.lp, ~mutate(., ID= as.numeric(ID)))
+N.and.lp.for.fitting <- map(N.and.lp, ~ mutate(., time = time - 4) %>% 
+                          filter(., time>=0) %>%
+                          select(., c("time","lp", "N", "ID" )) %>%
+                          data.frame(.)) 
+
+```
+
+
+
+```{r}
+#Merging data
+
+
+simultaneous_flow_data_fitting <- map2(Y.and.Kplus.for.fitting, N.and.lp.for.fitting, ~
+                                 merge(.x,.y, by = c("time","ID"),all = TRUE))
+
+simultaneous_flow_data_fitting <- map(simultaneous_flow_data_fitting, ~select(., c("time","Kplus", "Y", "lp", "N")))
+simultaneous_flow_data_fitting <- map(simultaneous_flow_data_fitting, ~ filter(., time < 80))
+simultaneous_flow_data_fitting <- map(simultaneous_flow_data_fitting, ~ filter(., !is.na(lp) & !lp == 0))
+
+simultaneous_flow_data_correct_times <- map(simultaneous_flow_data_fitting, ~ mutate(., time=time+4))
+
+```
+
+```{r}
+flow_frac <- function(t, state, parms){
+  with(as.list(c(state,parms)),{
+    # Thymus functions:
+    # Kplus = number of Ki67+YFP+ mSPs = assumed to be same functional form as Y
+    # pars estimated in Fitting C
+    # Kplus = Kplus0 + a.k*(t^b.k)*exp(-c.k*t)  
+    #
+    # Y = number of YFP+ mSPs (eqn 3a in text)
+    # pars estimated in Fitting A
+    # Y = Y0 + a*(t^b)*exp(-c*t)  # 
+
+    dKplus = a.k*exp(-c.k*t)*(b.k*(t^(b.k-1)) - c.k*(t^b.k))
+    dY = a*exp(-c*t)*(b*(t^(b-1)) - c*(t^b))
+    dlp = Theta/N * (Kplus - Y*lp) - beta*lp+2*p*(1-lp) # fraction Ki67+ of YFP+ naive ("l" in text)
+    dN = Theta*Y +(p-mu)*N # total YFP+ naive ("L" in text)
+    return(list(c(dKplus,  dY, dlp, dN)))
+  })
+}
+
+flow_frac_just_thymus <- function(t, state, parms){
+  with(as.list(c(state,parms)),{
+    # Thymus functions:
+    # Kplus = number of Ki67+YFP+ mSPs = assumed to be same functional form as Y
+    # pars estimated in Fitting C
+    # Kplus = Kplus0 + a.k*(t^b.k)*exp(-c.k*t)  
+    #
+    # Y = number of YFP+ mSPs (eqn 3a in text)
+    # pars estimated in Fitting A
+    # Y = Y0 + a*(t^b)*exp(-c*t)  # 
+
+    dKplus = a.k*exp(-c.k*t)*(b.k*(t^(b.k-1)) - c.k*(t^b.k))
+    dY = a*exp(-c*t)*(b*(t^(b-1)) - c*(t^b))
+    return(list(c(dKplus,  dY)))
+  })
+}
+```
+
+
+```{r}
+fun_log <- function (x){
+  #x[x<0] <- 0
+  #print(x)
+  return(log(x))
+}
+```
+
+
+```{r}
+##restricted fit = p = zero
+
+# init conds
+s <- c("Kplus" = 200,    #kpos YFP+ cells in thymus
+      "Y" = 10^3,     #YFP+ cells in thymus
+       "lp" = 0.2,
+       "N" = 26000)
+
+# init par guesses
+p <- c("a.k" = 1000,
+       "b.k" = 1.1,
+       "c.k" = 0.1,
+       "a" = 2000,
+       "b" = 1.1,
+       "c" = 0.2,
+       "Theta" = 0.7,
+       "mu" = 0.03,
+       "beta" = 0.33,
+       "p" = 0.0)
+
+freepars = c(names(p)[names(p)!="p"], names(s))
+
+print("Fitting starting... p = zero\n")
+start_time <- Sys.time()
+simultaneous_fit_frac_pzero <- map(simultaneous_flow_data_fitting, ~fit(datas = .,
+    odes = flow_frac,
+    free = freepars,
+    lower = c("a.k" = 10,
+       "b.k" = 1.0001,
+       "c.k" = 0.001,
+        "a" = 500,
+       "b" = 1.0001,
+       "c" = 0.01,
+       "Theta" = 0.1,
+       "mu" = 0.01,
+       "beta" = 0.1,
+       "Kplus" = 10,
+      "Y" = 100,
+       "lp" = 0.01,
+       "N" = 1000),
+    upper = c("a.k" = 5000,
+       "b.k" = 5,
+       "c.k" = 2,
+       "a" = 5000,
+       "b" = 4,
+       "c" = 2,
+       "Theta" = 2,
+       "mu" = 0.1,
+       "beta" = 1,
+       "Kplus" = 500,
+      "Y" = 1e5,
+       "lp" = 0.8,
+       "N" = 1e7),
+    method = "Marq",
+    fun = fun_log,
+    #show = NULL,
+    #    ymax = 0.3
+    bootstrap = nboots
+    )
+)
+print("Fitting ended")
+
+end_time <- Sys.time()
+print(end_time - start_time)
+shapiro <- map(simultaneous_fit_frac_pzero, ~shapiro.test(.[["residuals"]]))
+flow_sim_frac_pzero <- simultaneous_fit_frac_pzero 
+save(flow_sim_frac_pzero, file = "DataObjects/flow_sim_frac_pzero.Rdata")
+simultaneous_flow_frac_pzero_parms <-map(flow_sim_frac_pzero, ~.[["par"]])
+
+# approx confidence intervals
+interval=list()
+for(cell in c("CD4", "CD8")){
+fisher_info = solve(simultaneous_fit_frac_pzero[[cell]]$hessian)
+pars=simultaneous_fit_frac_pzero[[cell]]$par
+prop_sigma<-sqrt(diag(fisher_info))
+upper<-pars+1.96*prop_sigma
+lower<-pars-1.96*prop_sigma
+interval[[cell]]<-data.frame(value=pars, upper=upper, lower=lower)
+}
+
+save(interval, file = "DataObjects/flow_sim_frac_pzero_HessianEstimates.Rdata")
+
+cat("p non zero fit and bootstraps complete\n")
+```
+
+
+```{r}
+
+
+model_data <- map(simultaneous_flow_frac_pzero_parms, ~ run(tmax=80, tstep=0.1,
+    odes = flow_frac,
+    table = TRUE,
+    parms = c(., p=0),
+    ymax = 1,
+    show = "lp",
+    state =.[c("Kplus", "Y", "lp", "N")])
+)
+
+model_data_correct_times <- map(model_data, ~mutate(., time = time + 4))
+```
+
+
+
+```{r}
+# Combine the data and fits into one dataframe
+
+all_data_model <- map2(model_data_correct_times, simultaneous_flow_data_correct_times, ~merge(.x,.y, by = "time",all = TRUE)) %>% map(~setNames(.,c("time", "Kplus_model", "Y_model", "lp_model","N_model", "Kplus_data", "Y_data", "lp_data", "N_data")))
+
+all_data_model <- rbind(cbind(all_data_model[[1]], "receptor" = rep("CD4", nrow(all_data_model[[1]]))),
+                         cbind(all_data_model[[2]], "receptor" = rep("CD8", nrow(all_data_model[[2]]))))
+ 
+ flow_model_simultaneous_pzero_table <- all_data_model
+ write_rds(flow_model_simultaneous_pzero_table, file = "../scripts_figures/flow_model_simultaneous_pzero_table.Rds")
+```
+
+
+```{r}
+save.image("DataObjects/flow_model_together_pzero.RData")
+```
+
+
+

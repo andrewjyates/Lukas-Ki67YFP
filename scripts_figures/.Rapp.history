@@ -1,0 +1,2 @@
+load("/Users/andy/Dropbox/Documents/Projects/Collaborations/Eva Lukas/R scripts ANDY COPY 2023-05-09/scripts_figures/flow_frac_table_mouseID.Rds")
+load("/Users/andy/Dropbox/Documents/Projects/Collaborations/Eva Lukas/R scripts ANDY COPY 2023-05-09/scripts_figures/simple_frac_table.Rds")

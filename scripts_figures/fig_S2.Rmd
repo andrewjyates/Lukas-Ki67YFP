@@ -1,0 +1,191 @@
+---
+title: "Fig S2"
+output: html_notebook
+---
+
+```{r setup}
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+```
+
+
+```{r}
+library("tidyverse")
+library("ggplot2")
+library("cowplot")
+```
+
+
+```{r}
+ggplot_scientific_notation_axes_labels <- function(l) {
+  # 'prettyNum' puts things into scientific notation when digit strings get past a certain length,
+  # but keeps things  >0.0001 and < 10^7 in non-sci notation
+  l <- prettyNum(l)
+  # … but for axis labels, we want to switch to powers of 10 for anything >=10^3 or < 0.01
+  # (though you decide)
+  for(i in 1:length(l)){
+    number=eval(parse(text=l)[i])
+    if(!is.na(number) & (number<0.001 | number>=1000)) l[i]=format(number, scientific=TRUE)
+  }
+  # quote the part before the exponent to keep all the digits
+  l <- gsub("^(.*)e", "'\\1'e", l)
+  # remove + after exponent, if exists. E.g.: (e^+2 -> e^2)
+  l <- gsub("e\\+","e",l)  
+  l <- gsub("e0","e",l)  
+  l <- gsub("e-0","e-",l) 
+  # turn the 'e' into plotmath format
+  l <- gsub("e", "%*%10^", l)
+  # convert 1x10^ or 1.000x10^ -> 10^
+  l <- gsub("\\'1[\\.0]*\\'\\%\\*\\%", "", l)
+  # convert 0.000.. * 10^x to 0
+  l <- gsub("\\'0[\\.0]*\\'\\%\\*\\%", "", l)
+  l <- gsub("10\\^0", "0", l)
+  # return this as an expression
+  parse(text=l)
+}
+
+
+# x axis major tick marks - corresponding to time post START treatment
+major.ticks.actual.times=c(7,10,15, 25,35,45,55,65, 75) 
+major.ticks.time.post.tx=as.character(major.ticks.actual.times-5)
+# Option to put some gaps in this label list to stop numbers overlapping
+major.ticks.time.post.tx[major.ticks.time.post.tx=="50"] = ""
+major.ticks.time.post.tx[major.ticks.time.post.tx=="30"] = ""
+# minor breaks
+mb=c(6:75)
+
+plotwidth=12
+smaller.font.size=13.5
+larger.font.size=14.5
+title.font.size = 15
+panel.label.size = 16
+ptsize=1.5
+ptalpha=0.5
+
+```
+
+
+```{r}
+data_plots <- function(data,title, yaxis){
+  data=droplevels(data)
+  if(levels(data$celltype)[[1]] == "4nai") levels(data$celltype) = c("CD4 naive", "CD8 naive")
+  if(levels(data$celltype)[[1]] == "matSP4") levels(data$celltype) = c("Mature SP4", "Mature SP8")
+  ggplot(data, aes(x = time, y = cell_number))+
+#  labs(title = title, x = "Time since stop of treatment", y = yaxis)+
+  labs(title = title, x = "Time since end of treatment (days)", y = NULL)+
+  geom_point(size = ptsize, alpha= ptalpha )+
+  facet_wrap(~celltype)+
+    theme(plot.margin = unit(c(0, 0, 0, 0), "cm")) + 
+theme_bw()+
+  theme(axis.text=element_text(size=smaller.font.size), 
+          axis.title.x=element_text(size=smaller.font.size, margin = margin(t = 0, r = 0, b = 0, l = 0)),
+          axis.title.y=element_text(size=larger.font.size,face="bold"),
+          plot.title = element_text(hjust = 0.5, size = title.font.size,face="bold"),
+          text = element_text(family = "Helvetica", size = larger.font.size),
+          legend.position = "bottom",
+          legend.key = element_rect(fill = "transparent"),
+          strip.background = element_rect(color = "black", fill = "#FBFCFC"),
+          strip.text = element_text(face = "bold"))+
+    scale_x_log10(limits=c(6,75), breaks=major.ticks.actual.times, minor_breaks = mb, labels=major.ticks.time.post.tx)+
+  scale_y_log10(minor_breaks= NULL, labels = ggplot_scientific_notation_axes_labels)+
+    #scale_y_log10(limits=c(3e3, 3e6), breaks=c(3e3, 1e4, 3e4, 1e5, 3e5, 1e6, 3e6), labels = ggplot_scientific_notation_axes_labels)+
+    coord_cartesian(xlim=c(7,65))
+}
+```
+
+#A-C: cell numbers (mSP, spleen, LN)
+
+```{r}
+load("../data/DataObjects/CD4_CD8.RData")
+```
+
+```{r}
+cell_numbers <- map(CD4_CD8, ~.[["cell-numbers-all"]]) %>% 
+  map(~do.call(rbind,.)) %>% 
+  map(~filter(., celltype %in% c("4nai", "8nai", "matSP4", "matSP8"))) %>% 
+  map(~filter(., time >5 ))
+
+
+cell_numbers <- do.call(rbind, cell_numbers)
+cell_numbers <- cell_numbers %>% group_by(tissue) %>% group_split() 
+names(cell_numbers) <- paste("Cell numbers -", c("Lymph nodes", "Spleen", "Thymus"))
+A_C <- map2(cell_numbers, names(cell_numbers), ~data_plots(.x, .y,"Cell count"))
+
+```
+
+
+D-F: YFP frequencies (mSP, spleen, LN)
+
+```{r}
+YFP_frequency <- map(CD4_CD8, ~.[["perc YFP"]]) %>% 
+  map(~do.call(rbind,.)) %>% 
+  map(~filter(., celltype %in% c("4nai", "8nai", "matSP4", "matSP8"))) %>% 
+  map(~filter(., time >5 )) %>% 
+  map(~mutate(., cell_number = cell_number/100))
+YFP_frequency <- do.call(rbind, YFP_frequency)
+YFP_frequency <- YFP_frequency %>% group_by(tissue) %>% group_split()
+names(YFP_frequency) <- paste("YFP+ cell frequency -",c("Lymph nodes", "Spleen", "Thymus"))
+D_F <- map2(YFP_frequency, names(YFP_frequency), ~data_plots(.x, .y,"Frequency"))
+```
+
+
+----------------------------
+G-J: (4 panels!) Ki67 frequency in mSP, spleen, LN, corrlation spleen vs LN 
+
+
+```{r}
+Ki67_frequency <- map(CD4_CD8, ~.[["perc Ki67 - all cells"]]) %>% 
+  map(~do.call(rbind,.)) %>% 
+  map(~filter(., celltype %in% c("4nai", "8nai", "matSP4", "matSP8"))) %>% 
+  map(~filter(., time >5 )) %>% 
+  map(~mutate(., cell_number = cell_number/100))
+
+Ki67_frequency <- do.call(rbind, Ki67_frequency)
+Ki67_frequency <- Ki67_frequency %>% group_by(tissue) %>% group_split()
+
+names(Ki67_frequency) <- c("LN", "SP", "TH")
+Ki67_frequency_J <- merge(Ki67_frequency[["LN"]], Ki67_frequency[["SP"]], by = c("time", "ID", "mouse", "celltype"))
+names(Ki67_frequency) <- paste("Ki67+ frequency -",c("Lymph nodes", "Spleen", "Thymus"))
+G_I <- map2(Ki67_frequency, names(Ki67_frequency), ~data_plots(.x, .y,"Frequency"))
+
+Ki67_frequency_J = droplevels(Ki67_frequency_J)
+levels(Ki67_frequency_J$celltype) = c("CD4 naive", "CD8 naive")
+
+```
+
+
+```{r}
+J<- ggplot(Ki67_frequency_J, aes(x = cell_number.x, y = cell_number.y))+
+  labs(title = "Ki67 expression in the periphery", x = "Lymph nodes", y = "Spleen")+
+  geom_point(size = ptsize, alpha= ptalpha )+
+  facet_wrap(~celltype)+
+theme_bw()+
+  theme(axis.text=element_text(size=smaller.font.size), 
+          axis.title.x=element_text(size=larger.font.size,face="bold", margin = margin(t = 10, r = 0, b = 0, l = 0)),
+          axis.title.y=element_text(size=larger.font.size,face="bold"),
+          plot.title = element_text(hjust = 0.5, size = title.font.size, face="bold"),
+          text = element_text(family = "Helvetica", size = larger.font.size),
+          legend.position = "bottom",
+          legend.key = element_rect(fill = "transparent"),
+          strip.background = element_rect(color = "black", fill = "#FBFCFC"),
+          strip.text = element_text(face = "bold"))+
+    scale_x_log10()+
+  scale_y_log10()
+
+```
+
+```{r}
+
+allplots=plot_grid(plotlist=list(A_C[[1]], A_C[[2]], A_C[[3]], D_F[[1]], D_F[[2]], D_F[[3]],  G_I[[1]], G_I[[2]], G_I[[3]], J, NULL, NULL), 
+                   labels=c("A", "B", "C",  "D", "E", "F","G", "H", "I", "J", "", ""), 
+                   nrow=4, ncol=3, align="hv", label_size=20, label_x=0.05)
+
+pdf(file="../figures/fig_S2.pdf", width=17.6, height=12)
+print(allplots)
+dev.off()
+
+ pdf("../../Manuscript/PaperFigures/Figure-S2.pdf", width=17.6, height=12)
+ print(allplots)
+ dev.off()
+
+```
+

@@ -1,0 +1,62 @@
+---
+title: "fig S1"
+output: html_notebook
+---
+
+```{r setup}
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+```
+
+```{r}
+library("tidyverse")
+library("ggplot2")
+
+load(file = "../data/DataObjects/CD4_CD8.RData")
+
+x = read_rds(file = "../data/DataObjects/Mouse_ID_AgeClass.Rds")
+smaller.font.size=21
+larger.font.size=21
+
+age_histogram <- ggplot(data.frame(x),aes(x = age_at_start))+
+  geom_histogram(bins = 20,  colour = "black", fill = "lightblue", alpha = 0.2) + 
+  geom_vline(aes(xintercept = mean(age_at_start)), color = "black", linetype = "dashed", linewidth = 1)+
+  labs(x = "Number of mice", y = "Count", title = "Age of mouse at start of tamoxifen treatment")+
+  theme_bw()+
+  scale_x_continuous(limits=c(30,120), breaks = c(10,20,30,40,50,60,70,80,90,100,110,120))+
+  scale_y_continuous(breaks = seq(0,14,2))+
+theme(axis.text=element_text(size=smaller.font.size), 
+        #axis.title.x=element_text(size=larger.font.size,face="bold", margin = margin(t = 10, r = 0, b = 0, l = 0)),
+        axis.title.y=element_text(size=larger.font.size,face="bold"),
+        axis.title.x=element_text(size=larger.font.size,face="bold"),
+        plot.title = element_text(hjust = 0.5),
+        text = element_text(family = "Helvetica", size = larger.font.size),
+        legend.position = "",
+        #axis.title.x=element_blank(),
+        # axis.text.x=element_blank(),
+        # axis.ticks.x=element_blank(),
+        legend.key = element_rect(fill = "transparent"),
+        strip.background = element_rect(color = "black", fill = "#FBFCFC"))
+```
+
+```{r}
+golden.ratio=1.618
+plotwidth=12
+
+
+pdf("../figures/fig_S1.pdf", width=plotwidth, height=plotwidth/golden.ratio)
+print(age_histogram)
+dev.off()
+
+
+pdf("../../Manuscript/PaperFigures/Figure-S1.pdf", width=plotwidth, height=plotwidth/golden.ratio)
+print(age_histogram)
+dev.off()
+
+
+```
+
+
+
+
+
+

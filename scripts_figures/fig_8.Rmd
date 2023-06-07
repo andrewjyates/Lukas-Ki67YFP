@@ -1,0 +1,246 @@
+---
+title: "Fig 7"
+output: html_notebook
+---
+
+
+```{r setup}
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+```
+
+```{r}
+
+ggplot_scientific_notation_axes_labels <- function(l) {
+  # 'prettyNum' puts things into scientific notation when digit strings get past a certain length,
+  # but keeps things  >0.0001 and < 10^7 in non-sci notation
+  l <- prettyNum(l)
+  # … but for axis labels, we want to switch to powers of 10 for anything >=10^3 or < 0.01
+  # (though you decide)
+  for(i in 1:length(l)){
+    number=eval(parse(text=l)[i])
+    if(!is.na(number) & (number<0.001 | number>=1000)) l[i]=format(number, scientific=TRUE)
+  }
+  # quote the part before the exponent to keep all the digits
+  l <- gsub("^(.*)e", "'\\1'e", l)
+  # remove + after exponent, if exists. E.g.: (e^+2 -> e^2)
+  l <- gsub("e\\+","e",l)  
+  l <- gsub("e0","e",l)  
+  l <- gsub("e-0","e-",l) 
+  # turn the 'e' into plotmath format
+  l <- gsub("e", "%*%10^", l)
+  # convert 1x10^ or 1.000x10^ -> 10^
+  l <- gsub("\\'1[\\.0]*\\'\\%\\*\\%", "", l)
+  # convert 0.000.. * 10^x to 0
+  l <- gsub("\\'0[\\.0]*\\'\\%\\*\\%", "", l)
+  l <- gsub("10\\^0", "0", l)
+  # return this as an expression
+  parse(text=l)
+}
+```
+
+```{r}
+major.ticks.actual.times=c(7,10,15, 25,35,45,55,65, 75) 
+major.ticks.time.post.tx=as.character(major.ticks.actual.times-5)
+# Option to put some gaps in this label list to stop numbers overlapping
+major.ticks.time.post.tx[major.ticks.time.post.tx=="30"] = ""
+major.ticks.time.post.tx[major.ticks.time.post.tx=="50"] = ""
+# minor breaks
+mb=c(6:75)
+
+plotwidth=12
+golden.ratio=1.618
+smaller.font.size=13
+larger.font.size=14
+legend.font.size=11
+panel.label.size = 18
+point_line_size = 0.75
+xlab.text = "Time since end of tamoxifen treatment (days)"
+x.axis.label.offset= 5
+thymus.colour= "orange"
+
+```
+
+
+```{r}
+
+packages <- c("tidyverse", "ggplot2", "readr", "cowplot") 
+tmp=lapply(packages, require, character.only = TRUE)
+
+```
+
+
+```{r}
+simple_model_together_frac_table <- read_rds(file = "simple_model_together_frac_table.Rds")
+simple_model_together_abs_table <- read_rds(file = "simple_model_together_abs_table.Rds")
+flow_model_simultaneous_table <- read_rds( file = "flow_model_simultaneous_table.Rds")
+```
+
+
+```{r}
+simple_model_together_frac_table <- simple_model_together_frac_table[which(simple_model_together_frac_table$time >6 & simple_model_together_frac_table$time <67),]
+simple_model_together_abs_table <- simple_model_together_abs_table[which(simple_model_together_abs_table$time >6 & simple_model_together_abs_table$time <67),]
+flow_model_simultaneous_table <- flow_model_simultaneous_table[which(flow_model_simultaneous_table$time >6 & flow_model_simultaneous_table$time <67),]
+
+```
+
+Top row -Plotting simple model 
+
+A = Numbers of YFP expressing naive T cells, and mSPs Y(t)
+
+```{r}
+
+colors <- c("Naive" =  "Black", "Mature SP" = thymus.colour)
+
+Panel_A_simultaneous_plot_abs <- ggplot(simple_model_together_abs_table, aes(x = time))+
+  geom_point(aes(y = M_data, color = "Mature SP"), size = point_line_size)+
+  geom_line(aes(y = M_model, color = "Mature SP"), linewidth = point_line_size)+
+  geom_point(aes(y = N_data,
+                 color = "Naive"), size = point_line_size)+
+  geom_line(aes(y = N_model, color = "Naive"), linewidth = point_line_size)+
+  scale_color_manual(values = colors)+
+  ggtitle(bquote(bold('YFP')^bold('+')~bold('cell numbers'))) + 
+    labs(color=NULL, x = xlab.text, y = NULL) + 
+    facet_wrap(~receptor)+
+    theme_bw()+
+    theme(axis.text=element_text(size=smaller.font.size), 
+          axis.title.x=element_text(size=larger.font.size, 
+                  margin = margin(t = x.axis.label.offset, r = 0, b = 0, l = 0)),
+          axis.title.y=element_text(size=larger.font.size,face="bold"),
+          plot.title = element_text(hjust = 0.5, size=larger.font.size),
+          text = element_text(family = "Helvetica", size = larger.font.size),
+          legend.position = c(0.15, 0.2),
+          legend.text=element_text(size=legend.font.size),
+          legend.key = element_rect(fill = "transparent"),
+          strip.background = element_rect(color = "black", fill = "#FBFCFC"),
+          strip.text = element_text(face = "bold"))+
+    scale_x_log10(limits=c(6,75), breaks=major.ticks.actual.times, minor_breaks = mb, labels=major.ticks.time.post.tx)+
+    scale_y_log10(limits=c(100, 1e6), minor_breaks=NULL, labels = ggplot_scientific_notation_axes_labels)+
+    coord_cartesian(xlim=c(7,65))
+
+```
+
+
+B - YFP frequency in naive T cell population 
+
+```{r}
+
+colors <- c("YFP+ naive" =  "Black", "Z(t)" = thymus.colour)
+
+Panel_B_simultaneous_plot_frac <- ggplot(simple_model_together_frac_table, aes(x = time))+
+  geom_point(aes(y = Z_data, color = "Z(t)"), size = point_line_size)+
+  geom_line(aes(y = Z_model, color = "Z(t)"), linewidth = point_line_size)+
+  geom_point(aes(y = l_data, color = "YFP+ naive"), size = point_line_size)+
+  geom_line(aes(y = l_model, color = "YFP+ naive"), linewidth = point_line_size)+
+  #geom_point(aes(y = NA,color = "Mature SP"))+
+  scale_color_manual(values = colors)+
+    ggtitle(bquote(bold('YFP')^bold('+')~bold('cell frequency, and Z(t)'))) + 
+    labs(color = NULL,x = xlab.text, y =  NULL) + 
+    facet_wrap(~receptor)+
+    theme_bw()+
+    theme(axis.text=element_text(size=smaller.font.size), 
+          axis.title.x=element_text(size=larger.font.size, 
+                  margin = margin(t = x.axis.label.offset, r = 0, b = 0, l = 0)), 
+          axis.title.y=element_text(size=larger.font.size,face="bold"),
+          plot.title = element_text(hjust = 0.5, size=larger.font.size),
+          text = element_text(family = "Helvetica", size = larger.font.size),
+          legend.position = c(0.25, 0.2),
+          legend.text=element_text(size=legend.font.size),
+          legend.key = element_rect(fill = "transparent"),
+          #legend.key.height = unit(10),
+          legend.direction= "vertical",
+          strip.background = element_rect(color = "black", fill = "#FBFCFC"),
+          strip.text = element_text(face = "bold"))+
+    scale_x_log10(limits=c(6,75), breaks=major.ticks.actual.times, minor_breaks = mb, labels=major.ticks.time.post.tx)+
+    scale_y_log10(limits=c(1e-5, 0.1), minor_breaks=NULL, labels = ggplot_scientific_notation_axes_labels)+
+    coord_cartesian(xlim=c(7,65))
+
+```
+
+
+
+Row 2 -  Flow model (YFP+KI67)
+
+C. Cell numbers (L and K+ in model)
+
+
+```{r}
+
+colors <- c("Naive" =  "Black", "Mature SP" = thymus.colour)
+
+Panel_C_plots_N <- ggplot(flow_model_simultaneous_table, aes(x = time))+
+    #geom_point(aes(y = K_high_data, color = "Ki67 high"), size = point_line_size)+
+  #geom_line(aes(y = K_high_model, color = "Ki67 high"), size = point_line_size) + 
+  scale_color_manual(values = colors) +
+  geom_point(aes(y = N_data, color = "Naive"), size = point_line_size)+
+  geom_line(aes(y = N_model, color = "Naive"), linewidth = point_line_size)+
+  geom_point(aes(y = Y_data, color = "Mature SP"), size = point_line_size)+
+  geom_line(aes(y = Y_model, color = "Mature SP"), linewidth = point_line_size)+
+  facet_wrap(~receptor) +
+  ggtitle( bquote(bold('YFP')^bold('+')~bold('cell numbers'))) + 
+  labs(color = NULL,x = xlab.text, y =NULL ) + 
+ theme_bw()+
+  theme(axis.text=element_text(size=smaller.font.size), 
+          axis.title.x=element_text(size=larger.font.size, 
+                  margin = margin(t = x.axis.label.offset, r = 0, b = 0, l = 0)),
+          axis.title.y=element_text(size=larger.font.size,face="bold"),
+          plot.title = element_text(hjust = 0.5, size=larger.font.size),
+          text = element_text(family = "Helvetica", size = larger.font.size),
+          legend.position = c(0.15, 0.2),
+          legend.key = element_rect(fill = "transparent"),
+          legend.text=element_text(size=legend.font.size),
+          strip.background = element_rect(color = "black", fill = "#FBFCFC"),
+          strip.text = element_text(face = "bold"))+
+    scale_x_log10(limits=c(7,75), breaks=major.ticks.actual.times, minor_breaks = mb, labels=major.ticks.time.post.tx)+
+    scale_y_log10(limits=c(100, 1e6), labels = ggplot_scientific_notation_axes_labels)+
+  coord_cartesian(xlim=c(7,65))
+
+
+```
+
+D -Fraction of Ki67 expression within fluorescent population (l+ in model) 
+
+```{r}
+colors <- c("Ki67" = "black")
+
+Panel_D_plots_lp <- ggplot(filter(flow_model_simultaneous_table, !is.na(lp_data)), aes(x =  time))+ 
+  geom_point(aes(y = lp_data, color = "Ki67"), size = point_line_size)+
+  geom_line(data=flow_model_simultaneous_table, aes(y = lp_model, x=time, color = "Ki67"), linewidth = point_line_size) + 
+    facet_wrap(~receptor)+
+  scale_color_manual(values = colors) +
+    ggtitle( bquote(bold('Ki67')^bold('+')~bold('frequency among')~bold('YFP')^bold('+')~bold('naive cells'))) + 
+  labs(x = xlab.text, y = NULL, color = "")+
+  theme_bw()+
+  theme(axis.text=element_text(size=smaller.font.size), 
+          axis.title.x=element_text(size=larger.font.size, 
+                  margin = margin(t = x.axis.label.offset, r = 0, b = 0, l = 0)),
+          axis.title.y=element_text(size=larger.font.size,face="bold"),
+          plot.title = element_text(hjust = 0.5, size=larger.font.size),
+          text = element_text(family = "Helvetica", size = larger.font.size),
+          legend.position = "",
+          legend.key = element_rect(fill = "transparent"),
+          legend.text=element_text(size=legend.font.size),
+          strip.background = element_rect(color = "black", fill = "#FBFCFC"),
+          strip.text = element_text(face = "bold"))+
+    scale_x_log10(limits=c(7,75), breaks=major.ticks.actual.times, minor_breaks = mb, labels=major.ticks.time.post.tx)+
+    scale_y_log10(limits=c(0.003, 0.35), breaks=c(0.003, 0.01,  0.03, 0.1, 0.3), labels = ggplot_scientific_notation_axes_labels)+
+    coord_cartesian(xlim=c(7,65))
+
+```
+
+```{r}
+fig_7 <- plot_grid(
+  Panel_A_simultaneous_plot_abs, Panel_B_simultaneous_plot_frac, Panel_C_plots_N, Panel_D_plots_lp, align = "hv",
+  labels = "AUTO", nrow = 2,  label_size = panel.label.size, hjust=-0.7)
+
+
+pdf("../figures/fig_8.pdf", width=plotwidth, height=plotwidth/golden.ratio)
+print(fig_7)
+dev.off()
+
+
+pdf("../../Manuscript/PaperFigures/Figure-8.pdf", width=plotwidth, height=plotwidth/golden.ratio)
+print(fig_7)
+dev.off()
+
+```
+

@@ -1,0 +1,512 @@
+strip.text = element_text(face = "bold",size=larger.font.size))+
+scale_x_log10(limits=c(7,75), breaks=major.ticks.actual.times, minor_breaks = mb, labels=major.ticks.time.post.tx)+
+scale_y_log10(minor_breaks=NULL, labels = ggplot_scientific_notation_axes_labels)+
+coord_cartesian(xlim=c(7,65)) # trims the x-axis
+flow_frac_plot <-  ggplot(filter(flow_frac_table, lp_data>0), aes(x = time))+
+geom_point(aes(y = lp_data), color = "darkgrey", size = 2)+
+facet_wrap(~celltype)+
+geom_line(aes(y = lp_model), color = "black", size = 2)+
+labs(x = "Time since end of tamoxifen treatment (days) ",
+y = bquote(bold('Fraction Ki67')^bold('+')~bold('of YFP')^bold('+')))+
+theme_bw()+
+theme(axis.text=element_text(size=larger.font.size),
+axis.title.x=element_text(size=larger.font.size, face="bold", margin = margin(t = 20, r = 0, b = 0, l = 0)),
+axis.title.y=element_text(size=larger.font.size),
+plot.title = element_text(hjust = 0.5),
+text = element_text(family = "Helvetica", size = larger.font.size),
+legend.position = "bottom",
+legend.key = element_rect(fill = "transparent"),
+strip.background = element_rect(color = "black", fill = "#FBFCFC"),
+strip.text = element_text(face = "bold",size=larger.font.size))+
+scale_x_log10(limits=c(7,75), breaks=major.ticks.actual.times, minor_breaks = mb, labels=major.ticks.time.post.tx)+
+scale_y_log10(minor_breaks=NULL, labels = ggplot_scientific_notation_axes_labels)+
+coord_cartesian(xlim=c(7,65)) # trims the x-axis
+z= plot_grid(flow_frac_plot_N,flow_frac_plot,ncol=1, align="hv", labels = c('A', 'B'), label_size = panel.label.size)
+pdf("../figures/fig_6.pdf", width=plotwidth, height=plotwidth*0.8)
+print(z)
+dev.off()
+pdf("../../Integrated Version/PaperFigures/Figure-6.pdf", width=plotwidth, height=0.8*plotwidth)
+print(z)
+dev.off()
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+packages <- c("tidyverse", "ggplot2", "cowplot")
+lapply(packages, require, character.only = TRUE)
+load(file =  "../data/CD4_CD8.RData")
+ggplot_scientific_notation_axes_labels <- function(l) {
+# 'prettyNum' puts things into scientific notation when digit strings get past a certain length,
+# but keeps things  >0.0001 and < 10^7 in non-sci notation
+l <- prettyNum(l)
+# … but for axis labels, we want to switch to powers of 10 for anything >=10^3 or < 0.01
+# (though you decide)
+for(i in 1:length(l)){
+number=eval(parse(text=l)[i])
+if(!is.na(number) & (number<0.001 | number>=1000)) l[i]=format(number, scientific=TRUE)
+}
+# quote the part before the exponent to keep all the digits
+l <- gsub("^(.*)e", "'\\1'e", l)
+# remove + after exponent, if exists. E.g.: (e^+2 -> e^2)
+l <- gsub("e\\+","e",l)
+l <- gsub("e0","e",l)
+l <- gsub("e-0","e-",l)
+# turn the 'e' into plotmath format
+l <- gsub("e", "%*%10^", l)
+# convert 1x10^ or 1.000x10^ -> 10^
+l <- gsub("\\'1[\\.0]*\\'\\%\\*\\%", "", l)
+# convert 0.000.. * 10^x to 0
+l <- gsub("\\'0[\\.0]*\\'\\%\\*\\%", "", l)
+l <- gsub("10\\^0", "0", l)
+# return this as an expression
+parse(text=l)
+}
+plotwidth=9
+smaller.font.size=16
+larger.font.size=18
+panel.label.size = 21
+golden.ratio=1.618
+frac_Ki67_mSP <- map(CD4_CD8, ~.[["perc Ki67 - all cells"]][["TH"]]) %>%
+map(~filter(., grepl("mat", celltype)) %>%
+mutate(., k = cell_number/100, .keep = "unused"))
+count_mSP <- map(CD4_CD8, ~.[["cell-numbers-all"]][["TH"]]) %>%
+map(~filter(., grepl("mat", celltype)) %>%
+mutate(., S = cell_number, .keep = "unused"))
+load("../data/final_data_flow_model_v2.RData")
+count_nai <- map_depth(final_data_flow_model_v2, 2, ~do.call(rbind,.))
+count_nai <- map(count_nai, ~.$cell_numbers_all)
+count_nai <- map(count_nai, ~mutate(., N = cell_number_tot, .keep = "unused"))
+count_nai <- map2(count_nai, names(count_nai),~mutate(.x,ID = .y) )
+count_nai <- do.call(rbind, count_nai)
+count_nai<- count_nai %>% group_by(celltype) %>% group_split()
+names(count_nai) <- c("CD4", "CD8")
+#-----
+frac_Ki67_nai <- map_depth(final_data_flow_model_v2, 2, ~do.call(rbind,.))
+frac_Ki67_nai <- map(frac_Ki67_nai, ~.$Ki67_frac)
+frac_Ki67_nai <- map(frac_Ki67_nai, ~mutate(., kn = norm_frac_Ki67, .keep = "unused"))
+frac_Ki67_nai <- map2(frac_Ki67_nai, names(frac_Ki67_nai),~mutate(.x,ID = .y) )
+frac_Ki67_nai <- do.call(rbind, frac_Ki67_nai)
+frac_Ki67_nai<- frac_Ki67_nai %>% group_by(celltype) %>% group_split()
+names(frac_Ki67_nai) <- c("CD4", "CD8")
+data_for_prediction <- map2(frac_Ki67_mSP, count_mSP, ~merge(.x[c("ID", "k", "time")],.y[c("ID", "S", "time")], by = c("time","ID"),all = TRUE)) %>%
+map2(count_nai, ~merge(.x,.y, by = c("time","ID"),all = TRUE)) %>%
+map2(frac_Ki67_nai, ~merge(.x,.y, by = c("time","ID", "celltype"),all = TRUE))
+load("../fitting/flow_sim_frac.RData")
+#load("../fitting/flow_model.RData")
+# load("../fitting/parameters/p_Ki67_high_YFP.RData")
+#
+# p_Ki67_high_YFP <- map(p_Ki67_high_YFP, ~data.frame("a" = rep(.[['a']], 1000),
+#                                                     "b" = rep(.[['b']],1000),
+#                                                     "c" = rep(.[['c']],1000),
+#                                                     "Y0" = rep(.[['Y0']],1000),
+#                                                     "f" = rep(.[['f']],1000)))
+#
+# parms_frac <- map2(flow_frac_paras, p_Ki67_high_YFP, ~c(.x,.y))
+parms_frac <- map(flow_sim_frac, ~c("beta" = .[["par"]][["beta"]],
+"Theta" = .[["par"]][["Theta"]],
+"p" = .[["par"]][["p"]]))
+split <- function(x){
+x%>% group_by(ID) %>% group_split()
+}
+data_for_prediction <- map(data_for_prediction, ~split(.) %>% {names(.) = seq(1,61,1);.})
+data_for_prediction <- map_depth(data_for_prediction, 2, ~as.data.frame(.))
+parms_frac_bootstrap <- map(flow_sim_frac, ~.$bootstrap[,c("Theta", "beta", "p")])
+test <- map2(parms_frac_bootstrap,data_for_prediction, function(a,b) map(b, function(c) merge(a,c)))
+#parms_frac_bootstrap <- map(flow_frac_fit, ~.$bootstrap[,c("Theta", "beta", "p")])
+#parms_frac_bootstrap <- map2(parms_frac_bootstrap, p_Ki67_high_YFP, ~cbind(.x,.y))
+#test <- map2(parms_frac_bootstrap,data_for_prediction, function(a,b) map(b, function(c) merge(a,c)))
+prediction <- function(data, parms){
+kn = parms[["Theta"]] * data$k * data$S * (1/data$N) * (1/parms[["beta"]]) + 2*parms[["p"]]/parms[["beta"]]
+return(data.frame("time" = data$time, "ID" = data$ID,"kn_prediction" = kn))
+}
+prediction <- function(x){
+m = x$Theta * x$k* x$S * (1/x$N) * (1/x$beta) + 2*x$p/x$beta
+d = m - x$kn
+frac.diff = d/x$kn
+return(data.frame("time" = x$time, "ID" = x$ID,"kn_prediction" = m, "difference" = d, "frac.difference" = frac.diff, "data" = x$kn))
+}
+prediction_frac <- map(test, function(a) map(a, function(b) prediction(b)))
+prediction_frac <- map_depth(prediction_frac, 2, ~filter(., !is.na(kn_prediction)))
+cond <- map(prediction_frac, function(a) sapply(a, function(x) nrow(x) > 3))
+prediction_frac <- map2(prediction_frac, cond,~.x[.y])
+#v_d <- map_depth(prediction_frac, 2,~as.list(.))
+v_d <- map(prediction_frac, ~do.call(rbind,.))
+v_d <- map2(v_d,names(v_d), ~mutate(.x, receptor = .y))
+v_d <- map(v_d, ~filter(., !is.na(kn_prediction)))
+v_d <- map(v_d, ~filter(., !is.na(difference)))
+v_d <- rbind(v_d[[1]], v_d[[2]])
+CIs_kn_pred <- function(x){
+list("upper" = as.double(quantile(x$kn_prediction, 0.975)),
+"lower" = as.double(quantile(x$kn_prediction, 0.025)),
+"value" = median(x$kn_prediction),
+"data" = unique(x$data),
+"ID" = unique(x$ID),
+"time" = x$time
+)
+}
+kn_Cis <- map_depth(prediction_frac, 2, ~CIs_kn_pred(.))
+kn_Cis <- map(kn_Cis,~do.call(rbind,.) %>% data.frame(.))
+kn_Cis <- map(kn_Cis, ~filter(.,!is.na(value)))
+kn_Cis <- map2(kn_Cis, names(kn_Cis), ~mutate(.x,receptor = .y))
+kn_Cis <- map(kn_Cis, ~cbind(.))
+kn_Cis <- do.call(rbind, kn_Cis)
+kn_Cis <- map(kn_Cis, ~unlist(.))
+# make dataframe with ID, receptor, kn_prediction, kn_lower, kn_upper, data, diff_pred, diff_pred_lower, diff_pred_upper
+andy_summary=data.frame(cbind(
+kn_Cis$ID,
+kn_Cis$time,
+kn_Cis$receptor))
+andy_summary = cbind(andy_summary,
+kn_Cis$value,
+kn_Cis$lower,
+kn_Cis$upper,
+kn_Cis$data,
+kn_Cis$value - kn_Cis$data,
+kn_Cis$lower - kn_Cis$data,
+kn_Cis$upper - kn_Cis$data,
+(kn_Cis$value - kn_Cis$data)/kn_Cis$data,
+(kn_Cis$lower - kn_Cis$data)/kn_Cis$data,
+(kn_Cis$upper - kn_Cis$data)/kn_Cis$data
+)
+names(andy_summary) = c("MouseID", "time","receptor", "kn_prediction", "kn_lower", "kn_upper", "data", "diff_pred", "diff_pred_lower", "diff_pred_upper", "frac_diff_pred", "frac_diff_pred_lower", "frac_diff_pred_upper")
+andy_summary <- andy_summary[order(andy_summary$time),]
+library(forcats)
+colors <- c("Prediction" = "#34495E", "Data" = "#6DA75C")
+prediction_Ki67diff_plot <- ggplot(andy_summary)+
+geom_hline(yintercept = 0, color="black") +
+geom_linerange(aes(ymin = diff_pred_lower, ymax = diff_pred_upper, x = fct_inorder(MouseID)),  color="grey70", size=0.5, alpha = 0.2) +
+geom_point(aes(y=diff_pred, x = MouseID), color = "darkorange", size=1.5)+
+facet_wrap(~receptor)+
+ggtitle("Absolute difference in Ki67+ proportion (predicted - observed)") +
+labs(y = NULL, x = "Mouse")+
+theme_bw() +
+theme(axis.text.x = element_blank(), axis.ticks.x =element_blank(),
+panel.grid.major.x = element_blank(), panel.grid.minor.x = element_blank(),
+axis.text=element_text(size=smaller.font.size),
+axis.title.y=element_text(size=larger.font.size),
+axis.title.x=element_text(size=larger.font.size,margin = margin(t = 10, r = 0, b = 0, l = 0)),
+plot.title = element_text(hjust = 0.5, face="bold", size=larger.font.size),
+text = element_text(family = "Helvetica", size = larger.font.size),
+legend.position = "bottom",
+legend.key = element_rect(fill = "transparent"),
+strip.background = element_rect(color = "black", fill = "#FBFCFC"),
+strip.text = element_text(face = "bold")
+)
+prediction_Ki67fracdiff_plot <- ggplot(andy_summary)+
+geom_hline(yintercept = 0, color="black") +
+geom_linerange(aes(ymin = frac_diff_pred_lower, ymax = frac_diff_pred_upper, x = fct_inorder(MouseID)),  color="grey70", size=0.5, alpha = 0.2) +
+geom_point(aes(y=frac_diff_pred, x = MouseID), color = "darkorange", size=1.5)+
+facet_wrap(~receptor)+
+ggtitle("Fractional difference in Ki67+ proportion (predicted - observed)") +
+labs(y = NULL, x = "Mouse")+
+theme_bw() +
+theme(axis.text.x = element_blank(), axis.ticks.x =element_blank(),
+panel.grid.major.x = element_blank(), panel.grid.minor.x = element_blank(),
+axis.text=element_text(size=smaller.font.size),
+axis.title.y=element_text(size=larger.font.size),
+axis.title.x=element_text(size=larger.font.size,margin = margin(t = 10, r = 0, b = 0, l = 0)),
+plot.title = element_text(hjust = 0.5, face="bold", size=larger.font.size),
+text = element_text(family = "Helvetica", size = larger.font.size),
+legend.position = "bottom",
+legend.key = element_rect(fill = "transparent"),
+strip.background = element_rect(color = "black", fill = "#FBFCFC"),
+strip.text = element_text(face = "bold")
+)
+fig_8 <- plot_grid(
+prediction_Ki67diff_plot, prediction_Ki67fracdiff_plot,  align = "hv",
+labels = "AUTO", nrow = 2,  label_size = panel.label.size)
+#
+#
+pdf("../../Integrated Version/PaperFigures/Figure-8.pdf", width=plotwidth, height=plotwidth*0.9)#/golden.ratio)
+print(fig_8)
+dev.off()
+pdf("../figures/fig_8.pdf", width=plotwidth, height=plotwidth*0.9)#/golden.ratio)
+print(fig_8)
+dev.off()
+# pdf("../../Integrated Version/PaperFigures/Figure-8-parms-sep.pdf", width=plotwidth, height=plotwidth*0.9)#/golden.ratio)
+# print(fig_8)
+# dev.off()
+source("~/Dropbox/Documents/Projects/Collaborations/Eva Lukas/R scripts clean for submission/scripts_figures/fig_4.R")
+source("~/Dropbox/Documents/Projects/Collaborations/Eva Lukas/R scripts clean for submission/scripts_figures/fig_4.R")
+all_CIs$flow_frac
+source("~/Dropbox/Documents/Projects/Collaborations/Eva Lukas/R scripts clean for submission/scripts_figures/fig_4.R")
+all_CIs$flow_sim_frac
+source("~/Dropbox/Documents/Projects/Collaborations/Eva Lukas/R scripts clean for submission/scripts_figures/fig_4.R")
+source("~/Dropbox/Documents/Projects/Collaborations/Eva Lukas/R scripts clean for submission/scripts_figures/fig_4.R")
+source("~/Dropbox/Documents/Projects/Collaborations/Eva Lukas/R scripts clean for submission/scripts_figures/fig_4.R")
+source("~/Dropbox/Documents/Projects/Collaborations/Eva Lukas/R scripts clean for submission/scripts_figures/fig_4.R")
+pwd
+getwd()
+source("~/Dropbox/Documents/Projects/Collaborations/Eva Lukas/R scripts clean for submission/scripts_figures/fig_4.R")
+source("~/Dropbox/Documents/Projects/Collaborations/Eva Lukas/R scripts clean for submission/scripts_figures/fig_4.R")
+source("~/Dropbox/Documents/Projects/Collaborations/Eva Lukas/R scripts clean for submission/scripts_figures/fig_4.R")
+source("~/Dropbox/Documents/Projects/Collaborations/Eva Lukas/R scripts clean for submission/scripts_figures/fig_4.R")
+summary(flow_sim_frac_p0)
+summary(flow_sim_frac)
+source("~/Dropbox/Documents/Projects/Collaborations/Eva Lukas/R scripts clean for submission/scripts_figures/fig_4.R")
+source("~/Dropbox/Documents/Projects/Collaborations/Eva Lukas/R scripts clean for submission/scripts_figures/fig_4.R")
+source("~/.active-rstudio-document", echo=TRUE)
+source("~/.active-rstudio-document", echo=TRUE)
+source("~/.active-rstudio-document", echo=TRUE)
+source("~/Dropbox/Documents/Projects/Collaborations/Eva Lukas/R scripts clean for submission/scripts_figures/fig_4.R")
+source("~/Dropbox/Documents/Projects/Collaborations/Eva Lukas/R scripts clean for submission/scripts_figures/fig_4.R")
+flow_frac_comparison <- rbind(cbind(all_CIs$flow_frac[,c("Theta", "mu","beta","p", "receptor")], method = "separate"),
+cbind(all_CIs$flow_sim_frac[,c("Theta","mu","beta","p","receptor")],  method = "simultaneous"))
+head(all_CIs$flow_frac)
+head(all_CIs$flow_sim_frac)
+source("~/Dropbox/Documents/Projects/Collaborations/Eva Lukas/R scripts clean for submission/scripts_figures/fig_4.R")
+source("~/Dropbox/Documents/Projects/Collaborations/Eva Lukas/R scripts clean for submission/scripts_figures/fig_4.R")
+source("~/Dropbox/Documents/Projects/Collaborations/Eva Lukas/R scripts clean for submission/fitting/F_test.R")
+source("~/Dropbox/Documents/Projects/Collaborations/Eva Lukas/R scripts clean for submission/fitting/F_test.R")
+source("~/Dropbox/Documents/Projects/Collaborations/Eva Lukas/R scripts clean for submission/fitting/F_test.R", echo=TRUE)
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+library("tidyverse")
+library("ggplot2")
+ggplot_scientific_notation_axes_labels <- function(l) {
+# 'prettyNum' puts things into scientific notation when digit strings get past a certain length,
+# but keeps things  >0.0001 and < 10^7 in non-sci notation
+l <- prettyNum(l)
+# … but for axis labels, we want to switch to powers of 10 for anything >=10^3 or < 0.01
+# (though you decide)
+for(i in 1:length(l)){
+number=eval(parse(text=l)[i])
+if(!is.na(number) & (number<0.001 | number>=1000)) l[i]=format(number, scientific=TRUE)
+}
+# quote the part before the exponent to keep all the digits
+l <- gsub("^(.*)e", "'\\1'e", l)
+# remove + after exponent, if exists. E.g.: (e^+2 -> e^2)
+l <- gsub("e\\+","e",l)
+l <- gsub("e0","e",l)
+l <- gsub("e-0","e-",l)
+# turn the 'e' into plotmath format
+l <- gsub("e", "%*%10^", l)
+# convert 1x10^ or 1.000x10^ -> 10^
+l <- gsub("\\'1[\\.0]*\\'\\%\\*\\%", "", l)
+# convert 0.000.. * 10^x to 0
+l <- gsub("\\'0[\\.0]*\\'\\%\\*\\%", "", l)
+l <- gsub("10\\^0", "0", l)
+# return this as an expression
+parse(text=l)
+}
+# x axis major tick marks - corresponding to time post START treatment
+major.ticks.actual.times=c(7,10,15, 25,35,45,55,65, 75)
+major.ticks.time.post.tx=as.character(major.ticks.actual.times-5)
+# Option to put some gaps in this label list to stop numbers overlapping
+#shifted.time.labels[shifted.time.labels=="50"] = ""
+#shifted.time.labels[shifted.time.labels=="70"] = ""
+# minor breaks
+mb=c(6:75)
+plotwidth=12
+golden.ratio=1.618
+smaller.font.size=19
+larger.font.size=21
+legend.font.size=11
+panel.label.size = 24
+point_line_size = 1
+load("../data/final_data_flow_model_v2.RData")
+frac_Ki67 <- map_depth(final_data_flow_model_v2,2, ~do.call(rbind,.))
+frac_Ki67 <- map(frac_Ki67, ~c(.$Ki67_YFP_frac["norm_frac_Ki67_YFP"], .$Ki67_frac) %>%
+data.frame(.) %>%
+pivot_longer(data = ., cols = 1:2, names_to = "label", values_to = "frac") %>%
+filter(., time >5))
+frac_Ki67 <- do.call(rbind,frac_Ki67)
+colors <- c("YFP+ naive" = "#F4D03F", "Total naive"= "grey")
+YFP_plots_frac <- function(data, title){
+ggplot(data.frame(data), aes(x = time))+
+geom_point(aes(y = frac, color = Population), size = 3)+
+facet_wrap(~celltype)+
+scale_color_manual(values = colors)+
+labs(y = bquote(bold('Fraction Ki67')^bold('+')),
+x = "Time since end of tamoxifen treatment (days)")+
+theme_bw()+
+theme(axis.text=element_text(size=smaller.font.size),
+axis.title.x=element_text(size=larger.font.size,face="bold", margin = margin(t = 15, r = 0, b = 0, l = 0)),
+axis.title.y=element_text(size=larger.font.size,face="bold"),
+plot.title = element_text(hjust = 0.5),
+text = element_text(family = "Helvetica", size = larger.font.size),
+legend.position = c(0.35, 0.8),
+legend.title =element_text(size=smaller.font.size, face="bold"),
+legend.text=element_text(size=smaller.font.size),
+legend.key = element_rect(fill = "transparent"),
+#legend.key.height = unit(10),
+#legend.direction= "vertical",
+strip.background = element_rect(color = "black", fill = "#FBFCFC"),
+strip.text = element_text(face = "bold",size = larger.font.size))+
+scale_x_log10(limits=c(7,75), breaks=major.ticks.actual.times, minor_breaks = mb, labels=major.ticks.time.post.tx)+
+scale_y_log10(minor_breaks=NULL, labels = ggplot_scientific_notation_axes_labels)+
+coord_cartesian(xlim=c(7,65)) # trims the x-axis
+}
+frac_Ki67$celltype=droplevels(as.factor(frac_Ki67$celltype))
+levels(frac_Ki67$celltype)=c("CD4", "CD8")
+frac_Ki67$label=droplevels(as.factor(frac_Ki67$label))
+levels(frac_Ki67$label)=c("Total naive", "YFP+ naive")
+names(frac_Ki67) = c( "time",  "celltype",  "Population",   "frac")
+YFP_nai_plot_frac <- YFP_plots_frac(frac_Ki67, "Periphery")
+pdf("../figures/fig_5.pdf", width=plotwidth, height=plotwidth*0.5)
+print(YFP_nai_plot_frac)
+dev.off()
+pdf("../../Integrated Version/PaperFigures/Figure-5.pdf", width=plotwidth, height=0.5*plotwidth)
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+library("tidyverse")
+library("ggplot2")
+ggplot_scientific_notation_axes_labels <- function(l) {
+# 'prettyNum' puts things into scientific notation when digit strings get past a certain length,
+# but keeps things  >0.0001 and < 10^7 in non-sci notation
+l <- prettyNum(l)
+# … but for axis labels, we want to switch to powers of 10 for anything >=10^3 or < 0.01
+# (though you decide)
+for(i in 1:length(l)){
+number=eval(parse(text=l)[i])
+if(!is.na(number) & (number<0.001 | number>=1000)) l[i]=format(number, scientific=TRUE)
+}
+# quote the part before the exponent to keep all the digits
+l <- gsub("^(.*)e", "'\\1'e", l)
+# remove + after exponent, if exists. E.g.: (e^+2 -> e^2)
+l <- gsub("e\\+","e",l)
+l <- gsub("e0","e",l)
+l <- gsub("e-0","e-",l)
+# turn the 'e' into plotmath format
+l <- gsub("e", "%*%10^", l)
+# convert 1x10^ or 1.000x10^ -> 10^
+l <- gsub("\\'1[\\.0]*\\'\\%\\*\\%", "", l)
+# convert 0.000.. * 10^x to 0
+l <- gsub("\\'0[\\.0]*\\'\\%\\*\\%", "", l)
+l <- gsub("10\\^0", "0", l)
+# return this as an expression
+parse(text=l)
+}
+# x axis major tick marks - corresponding to time post START treatment
+major.ticks.actual.times=c(7,10,15, 25,35,45,55,65, 75)
+major.ticks.time.post.tx=as.character(major.ticks.actual.times-5)
+# Option to put some gaps in this label list to stop numbers overlapping
+#shifted.time.labels[shifted.time.labels=="50"] = ""
+#shifted.time.labels[shifted.time.labels=="70"] = ""
+# minor breaks
+mb=c(6:75)
+plotwidth=12
+golden.ratio=1.618
+smaller.font.size=19
+larger.font.size=21
+legend.font.size=11
+panel.label.size = 24
+point_line_size = 1
+load("../data/final_data_flow_model_v2.RData")
+frac_Ki67 <- map_depth(final_data_flow_model_v2,2, ~do.call(rbind,.))
+frac_Ki67 <- map(frac_Ki67, ~c(.$Ki67_YFP_frac["norm_frac_Ki67_YFP"], .$Ki67_frac) %>%
+data.frame(.) %>%
+pivot_longer(data = ., cols = 1:2, names_to = "label", values_to = "frac") %>%
+filter(., time >5))
+frac_Ki67 <- do.call(rbind,frac_Ki67)
+colors <- c("YFP+ naive" = "#F4D03F", "Total naive"= "grey")
+YFP_plots_frac <- function(data, title){
+ggplot(data.frame(data), aes(x = time))+
+geom_point(aes(y = frac, color = Population), size = 3)+
+facet_wrap(~celltype)+
+scale_color_manual(values = colors)+
+labs(y = bquote(bold('Fraction Ki67')^bold('+')),
+x = "Time since end of tamoxifen treatment (days)")+
+theme_bw()+
+theme(axis.text=element_text(size=smaller.font.size),
+axis.title.x=element_text(size=larger.font.size,face="bold", margin = margin(t = 15, r = 0, b = 0, l = 0)),
+axis.title.y=element_text(size=larger.font.size,face="bold"),
+plot.title = element_text(hjust = 0.5),
+text = element_text(family = "Helvetica", size = larger.font.size),
+legend.position = c(0.35, 0.8),
+legend.title =element_text(size=smaller.font.size, face="bold"),
+legend.text=element_text(size=smaller.font.size),
+legend.key = element_rect(fill = "transparent"),
+#legend.key.height = unit(10),
+#legend.direction= "vertical",
+strip.background = element_rect(color = "black", fill = "#FBFCFC"),
+strip.text = element_text(face = "bold",size = larger.font.size))+
+scale_x_log10(limits=c(7,75), breaks=major.ticks.actual.times, minor_breaks = mb, labels=major.ticks.time.post.tx)+
+scale_y_log10(minor_breaks=NULL, labels = ggplot_scientific_notation_axes_labels)+
+coord_cartesian(xlim=c(7,65)) # trims the x-axis
+}
+frac_Ki67$celltype=droplevels(as.factor(frac_Ki67$celltype))
+levels(frac_Ki67$celltype)=c("CD4", "CD8")
+frac_Ki67$label=droplevels(as.factor(frac_Ki67$label))
+levels(frac_Ki67$label)=c("Total naive", "YFP+ naive")
+names(frac_Ki67) = c( "time",  "celltype",  "Population",   "frac")
+YFP_nai_plot_frac <- YFP_plots_frac(frac_Ki67, "Periphery")
+pdf("../figures/fig_5.pdf", width=plotwidth, height=plotwidth*0.5)
+print(YFP_nai_plot_frac)
+dev.off()
+pdf("../../Manuscript/PaperFigures/Figure-5.pdf", width=plotwidth, height=0.5*plotwidth)
+print(YFP_nai_plot_frac)
+dev.off()
+source("~/.active-rstudio-document")
+source("~/.active-rstudio-document")
+source("~/.active-rstudio-document")
+source("~/.active-rstudio-document")
+source("~/.active-rstudio-document")
+source("~/.active-rstudio-document")
+source("~/.active-rstudio-document")
+slope = 2
+intercept = 1
+noise_sd = 1
+tvalues =0:10
+yvalues_true = intercept + slope*tvalues
+df=data.frame(y=yvalues_obs, t=tvalues))
+plot(y ~ t, data=df, ylim=c(0,25))
+tvalues =0:10
+yvalues_true = intercept + slope*tvalues
+yvalues_obs = yvalues_true + rnorm(11,mean=0,sd=noise_sd)
+df=data.frame(y=yvalues_obs, t=tvalues)
+plot(y ~ t, data=df, ylim=c(0,25))
+simple_model = lm(y ~ t, data=df)
+simple_model = lm(y ~ t, data=df)
+wrong_model = lm(y ~ t + t^2, data=df)
+wrong_model
+summary(wrong_model)
+summary(simple_model)
+wrong_model = lm(y ~ t^2, data=df)
+summary(wrong_model)
+wrong_model = lm(y ~ t + t^2, data=df)
+summary(wrong_model)
+simple_model = lm(y ~ poly(t, 1), data=df)
+wrong_model = lm(y ~ poly(t, 2) data=df)
+simple_model = lm(y ~ poly(t, 1), data=df)
+wrong_model = lm(y ~ poly(t, 2), data=df)
+summary(wrong_model)
+summary(simple_model)
+simple_model = lm(y ~ t  data=df)
+wrong_model = lm(y ~ t + I(t^2), data=df)
+simple_model = lm(y ~ t,  data=df)
+wrong_model = lm(y ~ t + I(t^2), data=df)
+summary(simple_model)
+summary(wrong_model)
+?predict
+predicted_simple = predict.lm(simple_model, newdata = data.frame(t=seq(0,10,0.1)))
+predicted_simple
+source("~/.active-rstudio-document")
+source("~/.active-rstudio-document")
+source("~/.active-rstudio-document")
+lines(predict.lm(simple_model, newdata = data.frame(t=fine_tvalues)) ~ fine_tvalues, col="red")
+source("~/.active-rstudio-document")
+source("~/.active-rstudio-document")
+summary(wrong_bigger_model)
+source("~/.active-rstudio-document")
+source("~/.active-rstudio-document")
+print(summary(right_simple_model))
+print(summary(wrong_bigger_model))
+source("~/.active-rstudio-document")
+source("~/.active-rstudio-document")
+source("~/.active-rstudio-document")
+source("~/.active-rstudio-document")
+source("~/.active-rstudio-document")
+source("~/.active-rstudio-document")
+source("~/.active-rstudio-document")
+source("~/.active-rstudio-document")
+source("~/.active-rstudio-document")
+source("~/.active-rstudio-document")
+source("~/.active-rstudio-document")
+source("~/.active-rstudio-document")
+source("~/.active-rstudio-document")
+source("~/.active-rstudio-document")
+source("~/.active-rstudio-document")
+source("~/.active-rstudio-document")
+source("~/.active-rstudio-document")
+source("~/.active-rstudio-document")
+source("~/.active-rstudio-document")
+source("~/.active-rstudio-document")
+source("~/.active-rstudio-document")
+library(FME)
+?modCost

@@ -1,0 +1,512 @@
+YFP_Ki67_fitting <- map(YFP_Ki67, ~ mutate(., time = time - 6) %>%
+filter(., !time<0)  %>%
+filter(., !is.na(np) & !np == 0) %>%
+filter(., time < 80)  %>%
+data.frame(.))
+#Merging data
+simultaneous_flow_data <- map2(K_y, YFP_Ki67, ~
+merge(.x,.y, by = c("time","ID"),all = TRUE))
+simultaneous_flow_data_fitting <- map2(K_y_fitting, YFP_Ki67_fitting, ~
+merge(.x,.y, by = c("time","ID"),all = TRUE))
+simultaneous_flow_data_fitting= map(simultaneous_flow_data_fitting, ~ rename(., Kplus=K_high))
+#save(simultaneous_flow_data, file = "../data/simultanous_flow_data.Rdata")
+flow_frac <- function(t, state, parms){
+with(as.list(c(state,parms)),{
+# Thymus functions:
+# Kplus = number of Ki67+YFP+ mSPs = assumed to be same functional form as Y
+# pars estimated in Fitting C
+# Kplus = Kplus0 + a.k*(t^b.k)*exp(-c.k*t)
+#
+# Y = number of YFP+ mSPs (eqn 3a in text)
+# pars estimated in Fitting A
+# Y = Y0 + a*(t^b)*exp(-c*t)  #
+dKplus = a.k*exp(-c.k*t)*(b.k*(t^(b-1)) - c*(t^b.k))
+dY = a*exp(-c*t)*(b*(t^(b-1)) - c*(t^b))
+dnp = Theta/N * (Kplus - Y*np) - beta*np+2*p*(1-np) # fraction Ki67+ of YFP+ naive ("l" in text)
+dN = Theta*Y +(p-mu)*N # total YFP+ naive ("L" in text)
+return(list(c(dKplus,  dY, dnp, dN)))
+})
+}
+fun_log <- function (x){
+x[x<0] <- 0
+#print(x)
+#return(log(x))
+return(log(x+0.001))
+}
+simultaneous_flow_data_fitting <- map(simultaneous_flow_data_fitting, ~select(., c("time","Kplus", "Y", "np", "N")))
+# init conds
+s <- c("Kplus" = 200,
+"Y" = 10^3,
+"np" = 0.2,
+"N" = 26000)
+# init par guesses
+p <- c("a.k" = 1000,
+"b.k" = 1.1,
+"c.k" = 0.1,
+"a" = 500,
+"b" = 1.1,
+"c" = 0.2,
+"Theta" = 0.7,
+"mu" = 0.03,
+"beta" = 0.33,
+"p" = 0.001)
+print("Fitting starting (p free)...\n")
+start_time <- Sys.time()
+simultaneous_fit_frac <- map(simultaneous_flow_data_fitting, ~fit(datas = .,
+odes = flow_frac,
+free = c(names(p),names(s)),
+lower = c("a.k" = 10,
+"b.k" = 0.01,
+"c.k" = 0.001,
+"a" = 50,
+"b" = 1.,
+"c" = 0.01,
+"Theta" = 0.1,
+"mu" = 0.01,
+"beta" = 0.1,
+"p" = 0.00001,
+"Kplus" = 10,
+"Y" = 100,
+"np" =0.01,
+"N" = 1000),
+upper = c("a.k" = 5000,
+"b.k" = 5,
+"c.k" = 2,
+"a" = 1000,
+"b" = 4,
+"c" = 2,
+"Theta" = 2,
+"mu" = 0.1,
+"beta" = 1,
+"p" = 0.005,
+"Kplus" = 500,
+"Y" = 1e5,
+"np" = 0.5,
+"N" = 1e7),
+method = "Pseudo",
+fun = fun_log
+#show = "np",
+#    ymax = 0.3
+#bootstrap = 100
+)
+)
+View(simultaneous_flow_data_fitting[["CD8"]])
+#Merging data
+simultaneous_flow_data <- map2(K_y, YFP_Ki67, ~
+merge(.x,.y, by = c("time","ID"),all = TRUE))
+simultaneous_flow_data_fitting <- map2(K_y_fitting, YFP_Ki67_fitting, ~
+merge(.x,.y, by = c("time","ID"),all = TRUE))
+simultaneous_flow_data_fitting= map(simultaneous_flow_data_fitting, ~ rename(., Kplus=K_high))
+simultaneous_flow_data_fitting= map(simultaneous_flow_data_fitting, ~ filter(., !is.na(N)))
+#save(simultaneous_flow_data, file = "../data/simultanous_flow_data.Rdata")
+View(simultaneous_flow_data_fitting[["CD8"]])
+#Merging data
+simultaneous_flow_data <- map2(K_y, YFP_Ki67, ~
+merge(.x,.y, by = c("time","ID"),all = TRUE))
+simultaneous_flow_data_fitting <- map2(K_y_fitting, YFP_Ki67_fitting, ~
+merge(.x,.y, by = c("time","ID"),all = TRUE))
+simultaneous_flow_data_fitting= map(simultaneous_flow_data_fitting, ~ rename(., Kplus=K_high))
+simultaneous_flow_data_fitting= map(simultaneous_flow_data_fitting, ~ filter(., !is.na(N)))
+#save(simultaneous_flow_data, file = "../data/simultanous_flow_data.Rdata")
+# Make zero values of Kplus equal to half min observed
+for(i in c("CD4", "CD8")){
+lowest.nonzero.Kplus=min(filter(simultaneous_flow_data_fitting[[i]], Kplus>0)$Kplus)
+simultaneous_flow_data_fitting[[i]]$Kplus[simultaneous_flow_data_fitting[[i]]$Kplus<lowest.nonzero.Kplus] =0.5* lowest.nonzero.Kplus
+}
+View(simultaneous_flow_data_fitting[["CD8"]])
+#Merging data
+simultaneous_flow_data <- map2(K_y, YFP_Ki67, ~
+merge(.x,.y, by = c("time","ID"),all = TRUE))
+simultaneous_flow_data_fitting <- map2(K_y_fitting, YFP_Ki67_fitting, ~
+merge(.x,.y, by = c("time","ID"),all = TRUE))
+simultaneous_flow_data_fitting= map(simultaneous_flow_data_fitting, ~ rename(., Kplus=K_high))
+simultaneous_flow_data_fitting= map(simultaneous_flow_data_fitting, ~ filter(., !is.na(N)))
+#save(simultaneous_flow_data, file = "../data/simultanous_flow_data.Rdata")
+# Make zero values of Kplus equal to half min observed
+for(i in c("CD4", "CD8")){
+lowest.nonzero.Kplus=min(filter(simultaneous_flow_data_fitting[[i]], Kplus>0)$Kplus)
+#simultaneous_flow_data_fitting[[i]]$Kplus[simultaneous_flow_data_fitting[[i]]$Kplus<lowest.nonzero.Kplus] =0.5* lowest.nonzero.Kplus
+}
+View(simultaneous_flow_data_fitting[["CD8"]])
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+load(file =  "../data/DataObjects/CD4_CD8.RData")
+load(file = "../data/DataObjects/final_data_flow_model.RData")
+#load("flow_model_together.RData")
+packages <- c("tidyverse", "ggplot2")
+tmp=lapply(packages, require, character.only = TRUE)
+#source("grind_catch_boot_errors.R")
+source("grind.R")
+cell_numbers_YFPmSP <- map(CD4_CD8, function(a) filter(a[["cell-numbers-YFPpos"]][["TH"]], grepl("mat", celltype)))
+perc_Ki67_YFPmSP <- map(CD4_CD8, function(a) filter(a[["perc Ki67 - YFPpos cells"]][["TH"]], grepl("mat", celltype)))
+K_combined_data <- map2(cell_numbers_YFPmSP, perc_Ki67_YFPmSP, ~ merge(.x,.y, by = c("mouse", "time", "ID", "celltype", "tissue"))) %>% map(~mutate(.,Y = cell_number.x )) %>% map(~mutate(.,fraction_Ki67 = cell_number.y/100))
+K_combined_data <- K_combined_data  %>% map(~mutate(., K_high = Y*fraction_Ki67)) %>%
+map(~filter(.,!is.na(Y)))
+K_combined_data_fitting <- K_combined_data %>%
+map(~mutate( .,time = time-6)) %>%
+map(~filter(., time >= 0))
+K_y <- map(K_combined_data, ~select(., c("time",  "K_high","Y", "ID")))
+K_y_fitting <- map(K_combined_data_fitting, ~select(., c("time",  "K_high","Y", "ID")))
+test <- map_depth(final_data_flow_model, 2,~do.call(rbind,.) )
+Ki67_YFP_frac <- map2(test, names(test), function(a,b) map(a, function(c) mutate(c, ID = b)))
+Ki67_YFP_frac <- map(Ki67_YFP_frac, ~merge(.[["Ki67_YFP_frac"]], .[["cell_numbers_YFPpos"]]))
+test <- do.call(rbind,Ki67_YFP_frac)
+Ki67_YFP_frac <- test %>% group_by(celltype) %>% group_split()
+names(Ki67_YFP_frac) <- c("CD4", "CD8")
+YFP_Ki67 <- map(Ki67_YFP_frac, ~ mutate(., np = norm_frac_Ki67_YFP)%>%
+mutate(., N = cell_number_tot))
+YFP_Ki67_fitting <- map(YFP_Ki67, ~ mutate(., time = time - 6) %>%
+filter(., !time<0)  %>%
+filter(., !is.na(np) & !np == 0) %>%
+filter(., time < 80)  %>%
+data.frame(.))
+#Merging data
+simultaneous_flow_data <- map2(K_y, YFP_Ki67, ~
+merge(.x,.y, by = c("time","ID"),all = TRUE))
+simultaneous_flow_data_fitting <- map2(K_y_fitting, YFP_Ki67_fitting, ~
+merge(.x,.y, by = c("time","ID"),all = TRUE))
+simultaneous_flow_data_fitting= map(simultaneous_flow_data_fitting, ~ rename(., Kplus=K_high))
+simultaneous_flow_data_fitting= map(simultaneous_flow_data_fitting, ~ filter(., !is.na(N)))
+#save(simultaneous_flow_data, file = "../data/simultanous_flow_data.Rdata")
+# Make zero values of Kplus equal to half min observed
+for(i in c("CD4", "CD8")){
+lowest.nonzero.Kplus=min(filter(simultaneous_flow_data_fitting[[i]], Kplus>0)$Kplus)
+simultaneous_flow_data_fitting[[i]]$Kplus[simultaneous_flow_data_fitting[[i]]$Kplus<lowest.nonzero.Kplus] =0.5* lowest.nonzero.Kplus
+}
+flow_frac <- function(t, state, parms){
+with(as.list(c(state,parms)),{
+# Thymus functions:
+# Kplus = number of Ki67+YFP+ mSPs = assumed to be same functional form as Y
+# pars estimated in Fitting C
+# Kplus = Kplus0 + a.k*(t^b.k)*exp(-c.k*t)
+#
+# Y = number of YFP+ mSPs (eqn 3a in text)
+# pars estimated in Fitting A
+# Y = Y0 + a*(t^b)*exp(-c*t)  #
+dKplus = a.k*exp(-c.k*t)*(b.k*(t^(b-1)) - c*(t^b.k))
+dY = a*exp(-c*t)*(b*(t^(b-1)) - c*(t^b))
+dnp = Theta/N * (Kplus - Y*np) - beta*np+2*p*(1-np) # fraction Ki67+ of YFP+ naive ("l" in text)
+dN = Theta*Y +(p-mu)*N # total YFP+ naive ("L" in text)
+return(list(c(dKplus,  dY, dnp, dN)))
+})
+}
+fun_log <- function (x){
+x[x<0] <- 0
+#print(x)
+#return(log(x))
+return(log(x+0.001))
+}
+simultaneous_flow_data_fitting <- map(simultaneous_flow_data_fitting, ~select(., c("time","Kplus", "Y", "np", "N")))
+# init conds
+s <- c("Kplus" = 200,
+"Y" = 10^3,
+"np" = 0.2,
+"N" = 26000)
+# init par guesses
+p <- c("a.k" = 1000,
+"b.k" = 1.1,
+"c.k" = 0.1,
+"a" = 500,
+"b" = 1.1,
+"c" = 0.2,
+"Theta" = 0.7,
+"mu" = 0.03,
+"beta" = 0.33,
+"p" = 0.001)
+print("Fitting starting (p free)...\n")
+start_time <- Sys.time()
+simultaneous_fit_frac <- map(simultaneous_flow_data_fitting, ~fit(datas = .,
+odes = flow_frac,
+free = c(names(p),names(s)),
+lower = c("a.k" = 10,
+"b.k" = 0.01,
+"c.k" = 0.001,
+"a" = 50,
+"b" = 1.,
+"c" = 0.01,
+"Theta" = 0.1,
+"mu" = 0.01,
+"beta" = 0.1,
+"p" = 0.00001,
+"Kplus" = 10,
+"Y" = 100,
+"np" =0.01,
+"N" = 1000),
+upper = c("a.k" = 5000,
+"b.k" = 5,
+"c.k" = 2,
+"a" = 1000,
+"b" = 4,
+"c" = 2,
+"Theta" = 2,
+"mu" = 0.1,
+"beta" = 1,
+"p" = 0.005,
+"Kplus" = 500,
+"Y" = 1e5,
+"np" = 0.5,
+"N" = 1e7),
+method = "Pseudo",
+fun = fun_log
+#show = "np",
+#    ymax = 0.3
+#bootstrap = 100
+)
+)
+print("Fitting ended")
+end_time <- Sys.time()
+print(end_time - start_time)
+shapiro <- map(simultaneous_fit_frac, ~shapiro.test(.[["residuals"]]))
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+load(file =  "../data/DataObjects/CD4_CD8.RData")
+load(file = "../data/DataObjects/final_data_flow_model.RData")
+#load("flow_model_together.RData")
+packages <- c("tidyverse", "ggplot2")
+tmp=lapply(packages, require, character.only = TRUE)
+#source("grind_catch_boot_errors.R")
+source("grind.R")
+cell_numbers_YFPmSP <- map(CD4_CD8, function(a) filter(a[["cell-numbers-YFPpos"]][["TH"]], grepl("mat", celltype)))
+perc_Ki67_YFPmSP <- map(CD4_CD8, function(a) filter(a[["perc Ki67 - YFPpos cells"]][["TH"]], grepl("mat", celltype)))
+K_combined_data <- map2(cell_numbers_YFPmSP, perc_Ki67_YFPmSP, ~ merge(.x,.y, by = c("mouse", "time", "ID", "celltype", "tissue"))) %>% map(~mutate(.,Y = cell_number.x )) %>% map(~mutate(.,fraction_Ki67 = cell_number.y/100))
+K_combined_data <- K_combined_data  %>% map(~mutate(., K_high = Y*fraction_Ki67)) %>%
+map(~filter(.,!is.na(Y)))
+K_combined_data_fitting <- K_combined_data %>%
+map(~mutate( .,time = time-6)) %>%
+map(~filter(., time >= 0))
+K_y <- map(K_combined_data, ~select(., c("time",  "K_high","Y", "ID")))
+K_y_fitting <- map(K_combined_data_fitting, ~select(., c("time",  "K_high","Y", "ID")))
+test <- map_depth(final_data_flow_model, 2,~do.call(rbind,.) )
+Ki67_YFP_frac <- map2(test, names(test), function(a,b) map(a, function(c) mutate(c, ID = b)))
+Ki67_YFP_frac <- map(Ki67_YFP_frac, ~merge(.[["Ki67_YFP_frac"]], .[["cell_numbers_YFPpos"]]))
+test <- do.call(rbind,Ki67_YFP_frac)
+Ki67_YFP_frac <- test %>% group_by(celltype) %>% group_split()
+names(Ki67_YFP_frac) <- c("CD4", "CD8")
+YFP_Ki67 <- map(Ki67_YFP_frac, ~ mutate(., np = norm_frac_Ki67_YFP)%>%
+mutate(., N = cell_number_tot))
+YFP_Ki67_fitting <- map(YFP_Ki67, ~ mutate(., time = time - 6) %>%
+filter(., !time<0)  %>%
+filter(., !is.na(np) & !np == 0) %>%
+filter(., time < 80)  %>%
+data.frame(.))
+#Merging data
+simultaneous_flow_data <- map2(K_y, YFP_Ki67, ~
+merge(.x,.y, by = c("time","ID"),all = TRUE))
+simultaneous_flow_data_fitting <- map2(K_y_fitting, YFP_Ki67_fitting, ~
+merge(.x,.y, by = c("time","ID"),all = TRUE))
+simultaneous_flow_data_fitting= map(simultaneous_flow_data_fitting, ~ rename(., Kplus=K_high))
+simultaneous_flow_data_fitting= map(simultaneous_flow_data_fitting, ~ filter(., !is.na(N)))
+#save(simultaneous_flow_data, file = "../data/simultanous_flow_data.Rdata")
+# Make zero values of Kplus equal to half min observed
+for(i in c("CD4", "CD8")){
+lowest.nonzero.Kplus=min(filter(simultaneous_flow_data_fitting[[i]], Kplus>0)$Kplus)
+simultaneous_flow_data_fitting[[i]]$Kplus[simultaneous_flow_data_fitting[[i]]$Kplus<lowest.nonzero.Kplus] =0.5* lowest.nonzero.Kplus
+}
+flow_frac <- function(t, state, parms){
+with(as.list(c(state,parms)),{
+# Thymus functions:
+# Kplus = number of Ki67+YFP+ mSPs = assumed to be same functional form as Y
+# pars estimated in Fitting C
+# Kplus = Kplus0 + a.k*(t^b.k)*exp(-c.k*t)
+#
+# Y = number of YFP+ mSPs (eqn 3a in text)
+# pars estimated in Fitting A
+# Y = Y0 + a*(t^b)*exp(-c*t)  #
+dKplus = a.k*exp(-c.k*t)*(b.k*(t^(b-1)) - c*(t^b.k))
+dY = a*exp(-c*t)*(b*(t^(b-1)) - c*(t^b))
+dnp = Theta/N * (Kplus - Y*np) - beta*np+2*p*(1-np) # fraction Ki67+ of YFP+ naive ("l" in text)
+dN = Theta*Y +(p-mu)*N # total YFP+ naive ("L" in text)
+return(list(c(dKplus,  dY, dnp, dN)))
+})
+}
+fun_log <- function (x){
+x[x<0] <- 0
+#print(x)
+return(log(x))
+}
+simultaneous_flow_data_fitting <- map(simultaneous_flow_data_fitting, ~select(., c("time","Kplus", "Y", "np", "N")))
+# init conds
+s <- c("Kplus" = 200,
+"Y" = 10^3,
+"np" = 0.2,
+"N" = 26000)
+# init par guesses
+p <- c("a.k" = 1000,
+"b.k" = 1.1,
+"c.k" = 0.1,
+"a" = 500,
+"b" = 1.1,
+"c" = 0.2,
+"Theta" = 0.7,
+"mu" = 0.03,
+"beta" = 0.33,
+"p" = 0.001)
+print("Fitting starting (p free)...\n")
+start_time <- Sys.time()
+simultaneous_fit_frac <- map(simultaneous_flow_data_fitting, ~fit(datas = .,
+odes = flow_frac,
+free = c(names(p),names(s)),
+lower = c("a.k" = 10,
+"b.k" = 0.01,
+"c.k" = 0.001,
+"a" = 50,
+"b" = 1.,
+"c" = 0.01,
+"Theta" = 0.1,
+"mu" = 0.01,
+"beta" = 0.1,
+"p" = 0.00001,
+"Kplus" = 10,
+"Y" = 100,
+"np" =0.01,
+"N" = 1000),
+upper = c("a.k" = 5000,
+"b.k" = 5,
+"c.k" = 2,
+"a" = 1000,
+"b" = 4,
+"c" = 2,
+"Theta" = 2,
+"mu" = 0.1,
+"beta" = 1,
+"p" = 0.005,
+"Kplus" = 500,
+"Y" = 1e5,
+"np" = 0.5,
+"N" = 1e7),
+method = "Pseudo",
+fun = fun_log
+#show = "np",
+#    ymax = 0.3
+#bootstrap = 100
+)
+)
+print("Fitting starting (p free)...\n")
+start_time <- Sys.time()
+simultaneous_fit_frac <- map(simultaneous_flow_data_fitting, ~fit(datas = .,
+odes = flow_frac,
+free = c(names(p),names(s)),
+lower = c("a.k" = 10,
+"b.k" = 0.01,
+"c.k" = 0.001,
+"a" = 50,
+"b" = 1.,
+"c" = 0.01,
+"Theta" = 0.1,
+"mu" = 0.01,
+"beta" = 0.1,
+"p" = 0.00001,
+"Kplus" = 10,
+"Y" = 100,
+"np" =0.01,
+"N" = 1000),
+upper = c("a.k" = 5000,
+"b.k" = 5,
+"c.k" = 2,
+"a" = 1000,
+"b" = 4,
+"c" = 2,
+"Theta" = 2,
+"mu" = 0.1,
+"beta" = 1,
+"p" = 0.005,
+"Kplus" = 500,
+"Y" = 1e5,
+"np" = 0.5,
+"N" = 1e7),
+method = "Marq",
+fun = fun_log
+#show = "np",
+#    ymax = 0.3
+#bootstrap = 100
+)
+)
+print("Fitting ended")
+end_time <- Sys.time()
+print(end_time - start_time)
+shapiro <- map(simultaneous_fit_frac, ~shapiro.test(.[["residuals"]]))
+flow_sim_frac <- simultaneous_fit_frac
+save(flow_sim_frac, file = "flow_sim_frac.Rdata")
+simultaneous_flow_frac_parms_p_not_0 <-map(flow_sim_frac, ~.[["par"]])
+# approx confidence intervals
+interval=list()
+for(cell in c("CD4", "CD8")){
+fisher_info = solve(simultaneous_fit_frac[[cell]]$hessian)
+pars=simultaneous_fit_frac[[cell]]$par
+prop_sigma<-sqrt(diag(fisher_info))
+upper<-pars+1.96*prop_sigma
+lower<-pars-1.96*prop_sigma
+interval[[cell]]<-data.frame(value=pars, upper=upper, lower=lower)
+}
+save(interval, file = "flow_sim_frac_estimates.Rdata")
+cat("p non zero fit and bootstraps complete\n")
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+load(file =  "../data/DataObjects/CD4_CD8.RData")
+load(file = "../data/DataObjects/final_data_flow_model.RData")
+#load("flow_model_together.RData")
+packages <- c("tidyverse", "ggplot2")
+tmp=lapply(packages, require, character.only = TRUE)
+#source("grind_catch_boot_errors.R")
+source("grind.R")
+cell_numbers_YFPmSP <- map(CD4_CD8, function(a) filter(a[["cell-numbers-YFPpos"]][["TH"]], grepl("mat", celltype)))
+perc_Ki67_YFPmSP <- map(CD4_CD8, function(a) filter(a[["perc Ki67 - YFPpos cells"]][["TH"]], grepl("mat", celltype)))
+K_combined_data <- map2(cell_numbers_YFPmSP, perc_Ki67_YFPmSP, ~ merge(.x,.y, by = c("mouse", "time", "ID", "celltype", "tissue"))) %>% map(~mutate(.,Y = cell_number.x )) %>% map(~mutate(.,fraction_Ki67 = cell_number.y/100))
+K_combined_data <- K_combined_data  %>% map(~mutate(., K_high = Y*fraction_Ki67)) %>%
+map(~filter(.,!is.na(Y)))
+K_combined_data_fitting <- K_combined_data %>%
+map(~mutate( .,time = time-6)) %>%
+map(~filter(., time >= 0))
+K_y <- map(K_combined_data, ~select(., c("time",  "K_high","Y", "ID")))
+K_y_fitting <- map(K_combined_data_fitting, ~select(., c("time",  "K_high","Y", "ID")))
+cell_numbers_YFPmSP <- map(CD4_CD8, function(a) filter(a[["cell-numbers-YFPpos"]][["TH"]], grepl("mat", celltype)))
+perc_Ki67_YFPmSP <- map(CD4_CD8, function(a) filter(a[["perc Ki67 - YFPpos cells"]][["TH"]], grepl("mat", celltype)))
+K_combined_data <- map2(cell_numbers_YFPmSP, perc_Ki67_YFPmSP, ~ merge(.x,.y, by = c("mouse", "time", "ID", "celltype", "tissue"))) %>% map(~mutate(.,Y = cell_number.x )) %>% map(~mutate(.,fraction_Ki67 = cell_number.y/100))
+K_combined_data <- K_combined_data  %>% map(~mutate(., K_high = Y*fraction_Ki67)) %>%
+map(~filter(.,!is.na(Y)))
+K_combined_data_fitting <- K_combined_data %>%
+map(~mutate( .,time = time-6)) %>%
+map(~filter(., time >= 0))
+K_y <- map(K_combined_data, ~select(., c("time",  "K_high","Y", "ID")))
+K_y_fitting <- map(K_combined_data_fitting, ~select(., c("time",  "K_high","Y", "ID")))
+test <- map_depth(final_data_flow_model, 2,~do.call(rbind,.) )
+Ki67_YFP_frac <- map2(test, names(test), function(a,b) map(a, function(c) mutate(c, ID = b)))
+Ki67_YFP_frac <- map(Ki67_YFP_frac, ~merge(.[["Ki67_YFP_frac"]], .[["cell_numbers_YFPpos"]]))
+test <- do.call(rbind,Ki67_YFP_frac)
+Ki67_YFP_frac <- test %>% group_by(celltype) %>% group_split()
+names(Ki67_YFP_frac) <- c("CD4", "CD8")
+YFP_Ki67 <- map(Ki67_YFP_frac, ~ mutate(., np = norm_frac_Ki67_YFP)%>%
+mutate(., N = cell_number_tot))
+YFP_Ki67_fitting <- map(YFP_Ki67, ~ mutate(., time = time - 6) %>%
+filter(., !time<0)  %>%
+filter(., !is.na(np) & !np == 0) %>%
+filter(., time < 80)  %>%
+data.frame(.))
+View(K_y_fitting)
+View(K_y_fitting[["CD4"]])
+View(cell_numbers_YFPmSP)
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+load(file = "../data/DataObjects/final_data_flow_model.RData")
+load(file = "../data/DataObjects/final_data_flow_model_v2.RData")
+#for keeping ID
+test <- map_depth(final_data_flow_model, 2,~do.call(rbind,.) )
+Ki67_YFP_frac <- map(test, ~merge(.[["Ki67_YFP_frac"]], .[["cell_numbers_YFPpos"]], by = c("time", "celltype")))
+Ki67_YFP_frac <- map2(Ki67_YFP_frac, names(Ki67_YFP_frac), ~ mutate(.x, ID = .y))
+test <- do.call(rbind,Ki67_YFP_frac)
+Ki67_YFP_frac <- test %>% group_by(celltype) %>% group_split()
+names(Ki67_YFP_frac) <- c("CD4", "CD8")
+Ki67_YFP_frac <- map(Ki67_YFP_frac, ~ mutate(., lp = norm_frac_Ki67_YFP, .keep = "unused")%>%
+mutate(., N = cell_number_tot, .keep = "unused") )
+View(Ki67_YFP_frac)
+View(Ki67_YFP_frac[["CD4"]])
+View(Ki67_YFP_frac)
+cell_numbers_YFPmSP <- map(CD4_CD8, function(a) filter(a[["cell-numbers-YFPpos"]][["TH"]], grepl("mat", celltype)))
+perc_Ki67_YFPmSP <- map(CD4_CD8, function(a) filter(a[["perc Ki67 - YFPpos cells"]][["TH"]], grepl("mat", celltype)))
+K_combined_data <- map2(cell_numbers_YFPmSP, perc_Ki67_YFPmSP, ~ merge(.x,.y, by = c("mouse", "time", "ID", "celltype", "tissue"))) %>% map(~mutate(.,Y = cell_number.x )) %>% map(~mutate(.,fraction_Ki67 = cell_number.y/100))
+K_combined_data <- K_combined_data  %>% map(~mutate(., K_high = Y*fraction_Ki67)) %>%
+map(~filter(.,!is.na(Y)))
+View(K_combined_data)
+View(Ki67_YFP_frac[["CD4"]])
+View(K_combined_data[["CD4"]])
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+packages <- c("tidyverse", "ggplot2", "cowplot", "readr")
+tmp=lapply(packages, require, character.only = TRUE, quietly=TRUE)
+load(file =  "../data/DataObjects/CD4_CD8.RData")
+source("grind.R")

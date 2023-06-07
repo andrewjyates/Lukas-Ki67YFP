@@ -1,0 +1,141 @@
+---
+title: "Thymic function K(t) (Ki67+ frac within YFP+ SPs)"
+output: html_notebook
+knit: (function(input, ...) {
+    rmarkdown::render(
+      input,
+      output_dir = "./html-output"
+    )
+  })
+---
+
+```{r setup}
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+```
+
+```{r}
+packages <- c("tidyverse", "ggplot2",  "cowplot", "readr", "gridExtra") 
+tmp=lapply(packages, require, character.only = TRUE)
+source("grind.R")
+load(file =  "../data/DataObjects/CD4_CD8.RData") 
+```
+
+Make dataframe with number of Ki67+ YFP+ cells
+
+```{r}
+cell_numbers_YFPmSP <- map(CD4_CD8, function(a) filter(a[["cell-numbers-YFPpos"]][["TH"]], grepl("mat", celltype)))
+perc_Ki67_YFPmSP <- map(CD4_CD8, function(a) filter(a[["perc Ki67 - YFPpos cells"]][["TH"]], grepl("mat", celltype)))
+
+Kplus.thymus.data <- map2(cell_numbers_YFPmSP, perc_Ki67_YFPmSP, ~ merge(.x,.y, by = c("mouse", "time", "ID", "celltype", "tissue"))) %>% map(~mutate(.,Y = cell_number.x )) %>% map(~mutate(.,fraction_Ki67 = cell_number.y/100)) %>% map(~select(., c("time", "Y", "fraction_Ki67", "ID")))
+
+# clean it up a bit. We should be left with time-4, cell_number, and ID
+for(i in c("CD4", "CD8")){
+  Kplus.thymus.data[[i]]=  Kplus.thymus.data[[i]] %>% mutate(Kplus = Y*fraction_Ki67) %>% mutate(time=time-4) %>% select(-c(Y, fraction_Ki67, ID))
+  # set zeros to half lowest value
+  lowest.nonzero.Kplus=min(filter(Kplus.thymus.data[[i]], Kplus>0)$Kplus)
+  Kplus.thymus.data[[i]]$Kplus[Kplus.thymus.data[[i]]$Kplus<lowest.nonzero.Kplus] =0.5* lowest.nonzero.Kplus
+  }
+```
+
+
+```{r}
+
+# Data transforms
+fun_hoch <- function(x){
+  x[x<0] <- 0
+  return(x^(1/4))
+}
+
+fun_log <- function (x){
+  #x[x<0] <- 0
+  #print(x)
+  return(log(x))
+}
+```
+
+
+Fitting
+
+```{r}
+# modeling K+ with the same form we used for Y
+# Kplus(t) = Kplus.slope0 + (a*t^b) *exp(-(c*t)^k)
+
+Kplus.model <- function(t, state, parms) {
+  with(as.list(c(state,parms)), {
+    Kplus = Kplus0 + a.k*(t^b.k)*exp(-c.k*t)
+    return(list(Kplus=Kplus)) 
+  }) 
+}
+p <- list("CD4" = c(Kplus0 = 500, a.k = 100, b.k = 1.5, c.k = 0.1),
+           "CD8" = c(Kplus0 = 500, a.k = 100, b.k = 1.5, c.k = 0.1))
+
+Kplus_fit = map2(Kplus.thymus.data, names(Kplus.thymus.data), ~fit(datas = data.frame(.x),
+                                free = c("Kplus0", "a.k", "b.k", "c.k"),
+                                parms = p[[.y]],
+                                fun = fun_log,
+                                odes = Kplus.model,
+                                solution = TRUE,
+                                #bootstrap = 1000,
+                                ymax = 30000,
+                                show = "Kplus",
+                                state = c(Kplus = NA),
+                                lower = c("Kplus0" = 0.01, "a.k" = 0.001, "b.k" = 0.00001, "c.k" = 0.00001),
+                                upper = c("Kplus0" = 10000, "a.k" = 10000, "b.k" = 10, "c.k" = 20),
+                                method = "Pseudo")
+)
+```
+
+Saving parameters and table for plotting
+
+
+```{r}
+p_Ki67_high_YFP  <- map(Kplus_fit, ~.[["par"]])
+save(p_Ki67_high_YFP, file = "parameters/p_Ki67_high_YFP.RData")
+
+Kplus_soln_table <- map(p_Ki67_high_YFP, ~run(tmax=95, solution = TRUE,parms = ., table = TRUE, odes = Kplus.model, state = c("Kplus" = NA)))
+
+Kplus_table_incorrect_times <- map2(Kplus.thymus.data, Kplus_soln_table , ~merge(.x[c("time", "Kplus")],.y[c("time", "Kplus")], by = "time", all = TRUE)) %>% map(~mutate(., data = Kplus.x, model = Kplus.y, .keep = "unused"))
+
+# correct the times
+K_table_correct_times = map(Kplus_table_incorrect_times, ~mutate(., time = time + 4))
+
+K_table_correct_times<- rbind(cbind(K_table_correct_times[[1]],  "celltype" = rep("CD4", nrow(K_table_correct_times[[1]]))),
+                  cbind(K_table_correct_times[[2]], "celltype" = rep("CD8", nrow(K_table_correct_times[[2]]))))
+
+write_rds(K_table_correct_times, file = "../scripts_figures/K_table.Rds")
+
+```
+```{r}
+save.image(file = "DataObjects/Kplus(t).RData")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

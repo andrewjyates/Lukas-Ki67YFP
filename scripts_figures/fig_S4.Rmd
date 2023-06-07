@@ -1,0 +1,145 @@
+---
+title: "Fig S4"
+output: html_notebook
+---
+
+```{r setup}
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+```
+
+```{r}
+packages <- c("tidyverse", "ggplot2", "cowplot", "readr") 
+tmp=lapply(packages, require, character.only = TRUE)
+```
+
+```{r}
+# read in the data + fit info from the Y and Z fits made in "Fitting A"
+Y_table <- read_rds(file = "Y_table.Rds")
+Z_table <- read_rds(file = "Z_table.Rds")
+```
+
+
+```{r}
+
+
+ggplot_scientific_notation_axes_labels <- function(l) {
+  # 'prettyNum' puts things into scientific notation when digit strings get past a certain length,
+  # but keeps things  >0.0001 and < 10^7 in non-sci notation
+  l <- prettyNum(l)
+  # … but for axis labels, we want to switch to powers of 10 for anything >=10^3 or < 0.01
+  # (though you decide)
+  for(i in 1:length(l)){
+    number=eval(parse(text=l)[i])
+    if(!is.na(number) & (number<0.001 | number>=1000)) l[i]=format(number, scientific=TRUE)
+  }
+  # quote the part before the exponent to keep all the digits
+  l <- gsub("^(.*)e", "'\\1'e", l)
+  # remove + after exponent, if exists. E.g.: (e^+2 -> e^2)
+  l <- gsub("e\\+","e",l)  
+  l <- gsub("e0","e",l)  
+  l <- gsub("e-0","e-",l) 
+  # turn the 'e' into plotmath format
+  l <- gsub("e", "%*%10^", l)
+  # convert 1x10^ or 1.000x10^ -> 10^
+  l <- gsub("\\'1[\\.0]*\\'\\%\\*\\%", "", l)
+  # convert 0.000.. * 10^x to 0
+  l <- gsub("\\'0[\\.0]*\\'\\%\\*\\%", "", l)
+  l <- gsub("10\\^0", "0", l)
+  # return this as an expression
+  parse(text=l)
+}
+
+
+major.ticks.actual.times=c(7,10,15, 25,35,45,55,65, 75) 
+major.ticks.time.post.tx=as.character(major.ticks.actual.times-5)
+# Option to put some gaps in this label list to stop numbers overlapping
+major.ticks.time.post.tx[major.ticks.time.post.tx=="50"] = ""
+major.ticks.time.post.tx[major.ticks.time.post.tx=="70"] = ""
+# minor breaks
+mb=c(6:75)
+
+plotwidth=12
+plotheight=plotwidth/2
+smaller.font.size=21
+larger.font.size=23
+panel.label.size = 28
+linewidth=1
+xtitle="Time since end of tamoxifen treatment (days)"
+```
+
+```{r}
+library(ggplot2)
+Y_table <- Y_table[which(Y_table$time >=7),]
+YFP_plot <-  ggplot(Y_table , aes(x = time))+
+  geom_point(data=filter(Y_table, !is.na(data)), aes(y = data), color = "darkgrey", size = 2)+
+  geom_line(aes(y = model), size=linewidth)+
+    facet_wrap(~celltype) +
+  ggtitle("YFP+ mSP numbers (Y(t))") + 
+    labs(x = xtitle, y = NULL)+
+  theme_bw()+
+  theme(axis.text=element_text(size=smaller.font.size), 
+        axis.title.x=element_text(size=larger.font.size, margin = margin(t = 10, r = 0, b = 0, l = 0)),
+        axis.title.y=element_text(size=larger.font.size),
+        plot.title = element_text(hjust = 0.5,family = "Helvetica", size = larger.font.size, face="bold"),
+        text = element_text(family = "Helvetica", size = larger.font.size),
+        legend.position = "bottom",
+        legend.key = element_rect(fill = "transparent"),
+        strip.background = element_rect(color = "black", fill = "#FBFCFC"),
+        strip.text = element_text(face = "bold", size = larger.font.size))+
+  scale_x_log10(limits=c(6,66), breaks=major.ticks.actual.times, minor_breaks = mb, labels=major.ticks.time.post.tx)+
+  scale_y_log10(minor_breaks=NULL, labels = ggplot_scientific_notation_axes_labels)+
+  coord_cartesian(xlim=c(7,65)) # trims the x-axis
+```
+
+
+```{r}
+Z_table <- Z_table[which(Z_table$time >=7),]
+Z_fits_plots <- ggplot(Z_table, aes(x = time))+
+       geom_point(data=filter(Z_table, !is.na(data)), aes(y = data), color = "darkgrey", size = 2)+
+       geom_line(aes(y = model), size = linewidth)+
+  facet_wrap(~celltype)+
+  ggtitle("Ratio of YFP+ mSP to naive T cells (Z(t))") + 
+  labs(x = xtitle, y =NULL)+
+  theme_bw()+
+  theme(axis.text=element_text(size=smaller.font.size), 
+        axis.title.x=element_text(size=larger.font.size, margin = margin(t = 10, r = 0, b = 0, l = 0)),
+        axis.title.y=element_text(size=larger.font.size),
+        plot.title = element_text(hjust = 0.5,family = "Helvetica", size = larger.font.size, face="bold"),
+        text = element_text(family = "Helvetica", size = larger.font.size),
+        legend.position = "bottom",
+        legend.key = element_rect(fill = "transparent"),
+        strip.background = element_rect(color = "black", fill = "#FBFCFC"),
+        strip.text = element_text(face = "bold",  size = larger.font.size))+
+  scale_x_log10(limits=c(6,66), breaks=major.ticks.actual.times, minor_breaks = mb, labels=major.ticks.time.post.tx)+
+  scale_y_log10(limits=c(0.00001, 0.01), minor_breaks=NULL, labels = ggplot_scientific_notation_axes_labels)+
+  coord_cartesian(xlim=c(7,65)) # trims the x-axis
+```
+
+
+```{r}
+thymus_both= plot_grid(YFP_plot, NULL, Z_fits_plots, nrow =3, align = "hv", labels=c("A", "", "B"), rel_heights=c(1,0.1,1), label_size=panel.label.size)
+```
+
+
+```{r}
+pdf("../figures/fig_S4.pdf", width=plotwidth, height=0.9*plotwidth)
+print(thymus_both)
+dev.off()
+
+ pdf("../../Manuscript/PaperFigures/Figure-S4.pdf", width=plotwidth, height=0.9*plotwidth)
+ print(thymus_both)
+ dev.off()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+

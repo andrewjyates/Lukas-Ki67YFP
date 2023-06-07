@@ -1,0 +1,252 @@
+---
+title: "Fitting A - Thymic Functions Y and Z"
+output: html_document
+knit: (function(input, ...) {
+    rmarkdown::render(
+      input,
+      output_dir = "./html-output"
+    )
+  })
+---
+
+```{r setup}
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+```
+
+```{r}
+packages <- c("tidyverse", "ggplot2", "cowplot", "readr") 
+tmp=lapply(packages, require, character.only = TRUE, quietly=TRUE)
+
+load(file =  "../data/DataObjects/CD4_CD8.RData") 
+source("grind.R")
+```
+
+#------- Y(t) - numbers of YFP expressing mSPs
+First time point is 4 days after start of treatment (mouse IDs 33, 34, 35)
+We work with t-4, so fitting starts at t=0
+Then transform back
+
+```{r}
+# two mice got removed in Data processing because they had no thymus data (d4) - goes from 47 mice in CD4_CD8 master data,  to 45 mice
+
+
+# Thymus data includes both immature and mature SPs - filter out the immature SPs and shift time
+# Code checks for NAs here but no YFP+ counts were NA
+
+YFP_absolute_Th_raw <- map(CD4_CD8, ~.[["cell-numbers-YFPpos"]][["TH"]] %>% 
+                             filter(., grepl("mat", celltype) &  !is.na(cell_number)) %>%
+                             mutate(.,time = time - 4))
+YFP_absolute_Th_raw_correct_times <- map(CD4_CD8, ~.[["cell-numbers-YFPpos"]][["TH"]] %>% 
+                            filter(., grepl("mat", celltype) & !is.na(cell_number)) )
+
+# Formatting for fitting.. removes everything except Y and t.
+# Also cuts out mice greater than 80d after treatment ended - makes it 43 mice
+YFP_absolute_Th <- map(YFP_absolute_Th_raw, ~ select(., c("time", "cell_number"),) %>% 
+  mutate(.,Y = cell_number, .keep = "unused") %>% filter(., time <80))
+
+# same thing but with correct times - will use for plotting later
+YFP_absolute_Th_correct_times <- map(YFP_absolute_Th_raw_correct_times, ~ select(., c("time", "cell_number"),) %>% 
+                         mutate(.,Y = cell_number, .keep = "unused"))
+
+
+
+# Empirical model of YFP+ mSP timecourse (assumes starts at t=0, which is t=4 in real time)
+model <- function(t, state, parms) {
+  with(as.list(c(state,parms)), {
+    Y =  Y0 + a*(t^b) *exp(-c*t)
+    return(list(c(Y))) 
+  }) 
+}
+
+# Fit it
+fun_log <- function (x){
+  return(log(x))
+} 
+s <- c(Y = NA)
+p <- c("a" = 1.5, "b" = 1, "c" = 0.1, "Y0" = 7)
+Y_fit <- map(YFP_absolute_Th, ~fit(data.frame(.),
+                                       odes = model,
+                                       free = c("a", "b","c","Y0"),
+                                       upper = c(50000,200,0.5,20000),
+                                       state = s,
+                                       parms = p,
+                                       lower = c(0.001,0.001,0.001,0),
+                                       fun = fun_log, 
+                                       #bootstrap = 1000,
+                                       solution = TRUE,
+                                       method="Pseudo"))
+
+shapiros <- map(Y_fit , ~shapiro.test(.[["residuals"]]))
+# p-value > 0.05 implies that the distribution of the data are not significantly different
+# from normal distribution. 
+
+p_YFP_mSP <- map(Y_fit, ~.$par) # extract parameters for fitted objects - list (SP4 and SP8)
+
+save(p_YFP_mSP, file = "parameters/p_YFP_mSP.RData")
+
+```
+
+Generate data frame (Y_table) with closely spaced points for smooth solution, and data points interspersed
+
+```{r}
+
+Y_fit_table <- map(p_YFP_mSP, ~ run(tmax = 80, tstep=0.1,
+                                    tmin = 0,
+                                    state =s,
+                                    parms = .,
+                                    odes = model,
+                                    table = TRUE,
+                                    solution = TRUE))
+
+
+Y_dataplusfit_table <- map2(Y_fit_table, YFP_absolute_Th, ~
+                           merge(.x, .y, by = "time", all = TRUE)) %>%
+  map(~rename(., model = Y.x, data = Y.y))
+
+Y_fit_table_correct_times <- map(Y_fit_table, ~mutate(., time = time+4))
+Y_dataplusfit_table_correct_times <- map2(Y_fit_table_correct_times, YFP_absolute_Th_correct_times, ~
+                           merge(.x, .y, by = "time", all = TRUE)) %>%
+                          map(~rename(., model = Y.x, data = Y.y))
+
+Y_dataplusfit_table <- rbind(cbind(Y_dataplusfit_table[[1]],
+                                "celltype" = rep("CD4", nrow(Y_dataplusfit_table[[1]]))),
+                          cbind(Y_dataplusfit_table[[2]], 
+                                "celltype" = rep("CD8", nrow(Y_dataplusfit_table[[2]]))))
+
+Y_dataplusfit_table_correct_times <- rbind(cbind(Y_dataplusfit_table_correct_times[[1]],
+                                "celltype" = rep("CD4", nrow(Y_dataplusfit_table_correct_times[[1]]))),
+                          cbind(Y_dataplusfit_table_correct_times[[2]], 
+                                "celltype" = rep("CD8", nrow(Y_dataplusfit_table_correct_times[[2]]))))
+
+Y_table <- Y_dataplusfit_table_correct_times
+write_rds(Y_table, file = "../scripts_figures/Y_table.Rds")
+
+```
+
+
+#-------- Z(t) - ratio of number of YFP expressing mSPs to number of total naive T cells 
+
+```{r}
+# YFP_absolute_Th <- map(CD4_CD8, ~.[["cell-numbers-YFPpos"]][["TH"]] %>% 
+#                          filter(., grepl("mat", celltype)) %>% 
+#                          select(., c("ID", "time", "cell_number")) %>%
+#                          mutate(., YFP = cell_number, .keep = "unused"))
+
+YFP_absolute_Th <- map(YFP_absolute_Th_raw_correct_times, ~ select(., c("time", "cell_number", "ID"),) %>% 
+                         mutate(.,YFP = cell_number, .keep = "unused"))
+
+```
+
+```{r}
+
+# get naive T cell numbers for each mouse (absolute_nai)
+# this removed the two mice for which we didn't have time thymus data
+
+load(file = "../data/DataObjects/final_data_simple_model.RData")
+
+naivecellnumbers <- map(final_data_simple_model, ~.[["cell_numbers_all"]])
+test <- map(naivecellnumbers, ~do.call(rbind,.))
+test <- map2(test, names(test), ~ mutate(.x, ID = as.factor(.y)))
+test <- do.call(rbind, test)
+naivecellnumbers <- test %>% group_by(celltype) %>% group_split()
+names(naivecellnumbers ) <- c("CD4", "CD8")
+
+absolute_nai <- map(naivecellnumbers, ~ mutate(., nai = cell_number_tot,.keep = "unused") %>%
+                      select(., !celltype))
+
+```
+
+
+```{r}
+Z_data_formatting_fitting <- function(x){
+  x %>% mutate(., Z = YFP/nai, time = time - 4) %>%
+    select(., c("ID", "time",  "nai", "YFP", "Z"))
+}
+
+Z_data_formatting <- function(x){
+  x %>% mutate(.,  Z = YFP/nai) %>%
+    select(., c("ID", "time",  "nai", "YFP", "Z"))
+}
+
+Z_data <- map2(absolute_nai, YFP_absolute_Th, ~ merge(.x,.y)) %>% 
+  map(Z_data_formatting)
+  
+
+Z_data_fitting <- map2(absolute_nai, YFP_absolute_Th, ~merge(.x,.y)) %>% 
+  map(Z_data_formatting_fitting)
+```
+
+
+```{r}
+
+Z_data_fitting <- map(Z_data_fitting, ~select(., c("time", "Z"))) %>% 
+  map(~filter(., time < 80)) %>% 
+  map(~filter(., !is.na(Z))) 
+
+fun_log <- function (x){
+  #x[x<0] <- 0
+  return(log(x))
+} 
+
+fun_logit <- function (x){
+  #if(any(x=0)) print("Logit zero!")
+  #if(any(x<0)) print("Logit negative!")
+  
+  return(log(x/(1-x)))
+}
+
+model <- function(t, state, parms){
+  with(as.list(c(state,parms)),{
+    Z = Z0*exp(a*t)/(1+exp(v*(t-tau)))^((a+b)/v)
+    return(list(c(Z)))
+  })
+}
+
+p<- c(Z0 = 0.01 , a = 0.5, b = 0.1, tau = 5, v = 0.9 )
+
+Z_fit <- map2(Z_data_fitting, names(Z_data_fitting), ~fit(.x,
+                           odes = model,
+                           free= c("Z0","a","b", "v", "tau"),
+                           state = c("Z" = 0.03),
+                           fun = fun_log,
+                           solution = TRUE,
+                           method ="Pseudo",
+                           parms = p,
+                           #bootstrap = 1000,
+                           lower = c("Z0" = 0.000001,"a" = 0.01,"b" = 0.01, "v" = 0.1, "tau" = 0.00),  # tau=1
+                           upper = c("Z0" = 0.05,"a" = 2,"b" = 0.6, "v" = 1.0, "tau" = 5) # a=1.65
+                           )
+)
+
+p_Z_mSP <- map(Z_fit, ~.$par)
+save(p_Z_mSP, file = "parameters/p_Z_mSP.RData")
+
+
+```
+
+```{r}
+Z_table <- map(p_Z_mSP, ~run(tmax=80,  tstep=0.1,
+                           ode = model, 
+                           parms = .,
+                           solution = TRUE,
+                           state = c("Z" = NA),
+                           table = TRUE))
+
+Z_table <- map(Z_table, ~mutate(., time = time +4 ))
+
+Z_table_data <- map2(Z_table, Z_data, ~merge(.x,.y, by = "time", all = TRUE )) %>%
+  map(~rename(., model = Z.x, data = Z.y))
+
+
+Z_table_data_all <- rbind(cbind(Z_table_data[[1]],  "celltype" = rep("CD4", nrow(Z_table_data[[1]]))),
+                    cbind(Z_table_data[[2]],   "celltype" = rep("CD8", nrow(Z_table_data[[2]]))))
+
+Z_table <- Z_table_data_all
+write_rds(Z_table, file = "../scripts_figures/Z_table.Rds")
+
+```
+
+```{r}
+save.image("DataObjects/Y(t)_Z(t).RData")
+```
+

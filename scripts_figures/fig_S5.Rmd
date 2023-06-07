@@ -1,0 +1,107 @@
+---
+title: "Figure S5"
+output: html_notebook
+---
+
+```{r setup}
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+```
+
+```{r}
+packages <- c("tidyverse", "ggplot2", "cowplot") 
+tmp=lapply(packages, require, character.only = TRUE)
+load(file =  "../data/DataObjects/CD4_CD8.RData") 
+```
+
+
+
+```{r}
+
+ggplot_scientific_notation_axes_labels <- function(l) {
+  # 'prettyNum' puts things into scientific notation when digit strings get past a certain length,
+  # but keeps things  >0.0001 and < 10^7 in non-sci notation
+  l <- prettyNum(l)
+  # … but for axis labels, we want to switch to powers of 10 for anything >=10^3 or < 0.01
+  # (though you decide)
+  for(i in 1:length(l)){
+    number=eval(parse(text=l)[i])
+    if(!is.na(number) & (number<0.001 | number>=1000)) l[i]=format(number, scientific=TRUE)
+  }
+  # quote the part before the exponent to keep all the digits
+  l <- gsub("^(.*)e", "'\\1'e", l)
+  # remove + after exponent, if exists. E.g.: (e^+2 -> e^2)
+  l <- gsub("e\\+","e",l)  
+  l <- gsub("e0","e",l)  
+  l <- gsub("e-0","e-",l) 
+  # turn the 'e' into plotmath format
+  l <- gsub("e", "%*%10^", l)
+  # convert 1x10^ or 1.000x10^ -> 10^
+  l <- gsub("\\'1[\\.0]*\\'\\%\\*\\%", "", l)
+  # convert 0.000.. * 10^x to 0
+  l <- gsub("\\'0[\\.0]*\\'\\%\\*\\%", "", l)
+  l <- gsub("10\\^0", "0", l)
+  # return this as an expression
+  parse(text=l)
+}
+
+
+major.ticks.actual.times=c(7,10,15, 25,35,45,55,65, 75) 
+major.ticks.time.post.tx=as.character(major.ticks.actual.times-5)
+# Option to put some gaps in this label list to stop numbers overlapping
+#major.ticks.time.post.tx[major.ticks.time.post.tx=="60"] = ""
+major.ticks.time.post.tx[major.ticks.time.post.tx=="80"] = ""
+major.ticks.time.post.tx[major.ticks.time.post.tx=="90"] = ""
+# minor breaks
+mb=c(6:75)
+
+plotwidth=12
+plotheight=plotwidth/2
+smaller.font.size=21
+larger.font.size=23
+panel.label.size = 28
+linewidth=1.5
+xtitle="Time since end of tamoxifen treatment (days)"
+
+
+```
+
+```{r}
+K_table <- read_rds("K_table.Rds")
+K_table <- K_table[which(K_table$time >6 & K_table$time < 67),]
+K_table$celltype = droplevels(factor(K_table$celltype))
+levels(K_table$celltype) = c("Mature SP4", "Mature SP8")
+```
+
+```{r}
+Ki67_abs_plot <-  ggplot(K_table , aes(x = time))+
+  geom_point(data=filter(K_table, !is.na(data)), aes(y = data), color = "grey50", size = 2)+
+  geom_line(aes(y = model), color = "black", size = 1)+
+    facet_wrap(~celltype) +
+    labs(x = xtitle, y = bquote(bold('Ki67')^bold('+')~bold('YFP')^bold('+')~bold("cell nos."))) + 
+  theme_bw()+
+  theme(axis.text=element_text(size=smaller.font.size), 
+        axis.title.x=element_text(size=smaller.font.size, margin = margin(t = 20, r = 0, b = 0, l = 0)),
+        axis.title.y=element_text(size=larger.font.size,face="bold"),
+        plot.title = element_text(hjust = 0.5),
+        text = element_text(family = "Helvetica", size = larger.font.size),
+        legend.position = "bottom",
+        legend.key = element_rect(fill = "transparent"),
+        strip.background = element_rect(color = "black", fill = "#FBFCFC"),
+        strip.text = element_text(face = "bold", size=larger.font.size))+
+  scale_x_log10(limits=c(6,75), breaks=major.ticks.actual.times, minor_breaks = mb, labels=major.ticks.time.post.tx)+
+  scale_y_log10(minor_breaks=NULL, labels = ggplot_scientific_notation_axes_labels)+
+  coord_cartesian(xlim=c(7,65)) # trims the x-axis
+
+
+```
+
+```{r}
+pdf("../figures/fig_S5.pdf", width=plotwidth, height=plotwidth*0.5)
+print(Ki67_abs_plot)
+dev.off()
+
+pdf("../../Manuscript/PaperFigures/Figure-S5.pdf", width=plotwidth, height=0.5*plotwidth)
+print(Ki67_abs_plot)
+dev.off()
+
+```

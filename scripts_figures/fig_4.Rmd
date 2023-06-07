@@ -1,0 +1,156 @@
+---
+title: "Fig 3"
+#output: html_notebook
+---
+
+```{r setup}
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+
+```
+
+```{r}
+packages <- c("tidyverse", "ggplot2", "cowplot", "readr", "gridExtra") 
+tmp=lapply(packages, require, character.only = TRUE)
+```
+
+read in data
+
+```{r}
+simple_frac_table <- read_rds(file = "simple_frac_table.Rds")
+simple_abs_table <- read_rds(file = "simple_abs_table.Rds")
+demog=read_rds(file="../data/DataObjects/Mouse_ID_AgeClass.Rds")
+```
+
+add mouse age at tx start and make age classes (defined in `demog' from Mouse_ID_AgeClass.Rds at data processing step)
+
+```{r}
+simple_frac_table$ID = as.numeric(simple_frac_table$ID)
+simple_frac_table$age_at_start=demog$age_at_start[simple_frac_table$ID]
+simple_frac_table$age_class = demog$age_class[simple_frac_table$ID]
+
+
+simple_abs_table$ID = as.numeric(simple_abs_table$ID)
+simple_abs_table$age_at_start=demog$age_at_start[simple_abs_table$ID]
+simple_abs_table$age_class=demog$age_class[simple_abs_table$ID]
+
+simple_abs_table <- simple_abs_table[which(simple_abs_table$time >6 & simple_abs_table$time <67),]
+simple_frac_table <- simple_frac_table[which(simple_frac_table$time >6 & simple_frac_table$time <67),]
+
+```
+
+Make nice sci notation axis labels in ggplot2
+
+```{r}
+ggplot_scientific_notation_axes_labels <- function(l) {
+  # 'prettyNum' puts things into scientific notation when digit strings get past a certain length,
+  # but keeps things  >0.0001 and < 10^7 in non-sci notation
+  l <- prettyNum(l)
+  # … but for axis labels, we want to switch to powers of 10 for anything >=10^3 or < 0.01
+  # (though you decide)
+  for(i in 1:length(l)){
+    number=eval(parse(text=l)[i])
+    if(!is.na(number) & (number<0.001 | number>=1000)) l[i]=format(number, scientific=TRUE)
+  }
+  # quote the part before the exponent to keep all the digits
+  l <- gsub("^(.*)e", "'\\1'e", l)
+  # remove + after exponent, if exists. E.g.: (e^+2 -> e^2)
+  l <- gsub("e\\+","e",l)  
+  l <- gsub("e0","e",l)  
+  l <- gsub("e-0","e-",l) 
+  # turn the 'e' into plotmath format
+  l <- gsub("e", "%*%10^", l)
+  # convert 1x10^ or 1.000x10^ -> 10^
+  l <- gsub("\\'1[\\.0]*\\'\\%\\*\\%", "", l)
+  # convert 0.000.. * 10^x to 0
+  l <- gsub("\\'0[\\.0]*\\'\\%\\*\\%", "", l)
+  l <- gsub("10\\^0", "0", l)
+  # return this as an expression
+  parse(text=l)
+}
+
+#simple_abs_table <- simple_abs_table[which(simple_abs_table$time >6 & simple_abs_table$time <66),]
+#simple_frac_table <- simple_frac_table[which(simple_frac_table$time >6 & simple_frac_table$time <66),]
+
+# x axis major tick marks - corresponding to time post START treatment
+major.ticks.actual.times=c(7,10,15, 25,35,45,55,65, 75) 
+major.ticks.time.post.tx=as.character(major.ticks.actual.times-5)
+# Option to put some gaps in this label list to stop numbers overlapping
+#major.ticks.time.post.tx[major.ticks.time.post.tx=="50"] = ""
+#major.ticks.time.post.tx[major.ticks.time.post.tx=="70"] = ""
+
+# minor breaks
+mb=c(6:75)
+
+# plotting size and fonts (for PDF)
+plotwidth=12
+smaller.font.size=15
+larger.font.size=17
+panel.label.size = 22
+```
+
+Show fits of simple models (to abs counts opf YFP+ cells, or fractions), points sized by mouse age at start of treatment: 
+
+```{r}
+
+abs_plots_age <- ggplot(simple_abs_table, aes(x=time))+
+    geom_point(data=simple_abs_table %>% filter(!is.na(data)) %>%droplevels(), aes(y = data, size = age_class), alpha=0.3)+ 
+  ggtitle("Fitting to labeled cell numbers") +
+   labs(size="Age at start (d)") + 
+    #geom_point(data=simple_abs_table %>% filter(!is.na(data)) %>%droplevels(), aes(y = data, shape = age_class))+
+    geom_line(aes(y = model), size = 1)+
+    labs(color = "",x = "Time since end of tamoxifen treatment (days)", y =  bquote(bold('YFP')^bold('+')~bold('cell numbers'))) + 
+    facet_wrap(~celltype)+
+    theme_bw()+
+    theme(axis.text=element_text(size=larger.font.size), 
+          axis.title.x=element_text(size=larger.font.size, margin = margin(t = 10, r = 0, b = 0, l = 0)),
+          axis.title.y=element_text(size=larger.font.size,face="bold"),
+          plot.title = element_text(hjust = 0.5),
+          text = element_text(family = "Helvetica", size = larger.font.size),
+          legend.position = c(0.35,0.25),
+          legend.title=element_text(size=smaller.font.size),
+          legend.text = element_text(size=smaller.font.size),
+          legend.key = element_rect(fill = "transparent"),
+          strip.background = element_rect(color = "black", fill = "#FBFCFC"),
+          strip.text = element_text(face = "bold", size=larger.font.size))+
+    scale_x_log10(limits=c(7,75), breaks=major.ticks.actual.times, minor_breaks = mb, labels=major.ticks.time.post.tx)+
+    scale_y_log10(limits=c(1e4, 1e6), minor_breaks=c(3e4,3e5), labels = ggplot_scientific_notation_axes_labels)+
+    coord_cartesian(xlim=c(7,65))
+#+      scale_color_manual(labels = c("< 60", "60-80", "80-100", "> 100", "NA"), values = c("#A9CCE3","#82E0AA", "#2471A3", "#1E8449", "#f5f5f5"))
+    
+
+frac_plots_age <- ggplot(simple_frac_table, aes(x = time))+
+    geom_point(data=simple_frac_table %>% filter(!is.na(data)) %>%droplevels(), aes(y = data, size = age_class), alpha=0.3)+
+    ggtitle("Fitting to labeled cell frequencies") +
+     labs(size="Age at start (d)") + 
+    #geom_point(data=simple_frac_table %>% filter(!is.na(data)) %>%droplevels(), aes(y = data, shape = age_class))+
+    geom_line(aes(y = model), linewidth = 1)+
+    labs(color = "",x = "Time since end of tamoxifen treatment (days)", y = bquote(bold('Fraction YFP')^bold('+')))+
+    facet_wrap(~celltype)+
+    theme_bw()+ 
+     theme(axis.text=element_text(size=larger.font.size), 
+          axis.title.x=element_text(size=larger.font.size, margin = margin(t = 10, r = 0, b = 0, l = 0)),
+          axis.title.y=element_text(size=larger.font.size,face="bold"),
+          plot.title = element_text(hjust = 0.5),
+          text = element_text(family = "Helvetica", size = larger.font.size),
+          legend.position = c(0.35,0.25),
+          legend.title=element_text(size=smaller.font.size),
+          legend.key = element_rect(fill = "transparent"),
+          strip.background = element_rect(color = "black", fill = "#FBFCFC"),
+          strip.text = element_text(face = "bold", size=larger.font.size))+
+    scale_x_log10(limits=c(7,75), breaks=major.ticks.actual.times, minor_breaks = mb, labels=major.ticks.time.post.tx)+
+    scale_y_log10(minor_breaks=NULL, labels = ggplot_scientific_notation_axes_labels)+
+    coord_cartesian(xlim=c(7,65))
+#+     scale_color_manual(labels = c("< 60", "60-80", "80-100", "> 100", "NA"), values = c("#A9CCE3","#82E0AA", "#2471A3", "#1E8449", "#f5f5f5")) # trims the x-axis
+
+z_age= plot_grid(abs_plots_age,NULL, frac_plots_age,ncol=1, align="hv", labels = c('A', '', 'B'), label_size = panel.label.size, axis = "lr", rel_heights = c(1, 0.1, 1))#,shared_legend = TRUE, rel_heights = c(1, 1,0.1))
+pdf("../figures/fig_4.pdf", width=plotwidth, height=plotwidth)
+print(z_age)
+dev.off()
+
+
+pdf("../../Manuscript/PaperFigures/Figure-4.pdf", width=plotwidth, height=plotwidth)
+print(z_age)
+dev.off()
+
+```
+

@@ -1,0 +1,181 @@
+---
+title: "flow model - Ki67, fixed thymic functions"
+output: html_document
+knit: (function(input, ...) {
+    rmarkdown::render(
+      input,
+      output_dir = "./html-output"
+    )
+  })
+---
+
+```{r setup}
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+```
+
+```{r}
+packages <- c("tidyverse") 
+tmp=lapply(packages, require, character.only = TRUE)
+source("grind.R")
+
+# optional - read in previous run output
+#load(file = "DataObjects/flow_model.RData")  
+
+nboots=500
+```
+
+```{r}
+load(file = "parameters/p_YFP_mSP.RData") # parameters estimated by Fitting routine A, for the timecourse of YFP+ mSP4 and mSP8 cells.
+load(file = "parameters/p_Ki67_high_YFP.RData") # parameters estimated by Fitting routine C, for timecourse of Ki67+ frac among YFP+ mSPs
+```
+
+```{r}
+flow_frac_model <- function(receptor){
+  p_mSP_hi = p_Ki67_high_YFP[[receptor]]
+  p_mSP_YFP = p_YFP_mSP[[receptor]]
+  K_hi_mSP <- function(t, state, parms){
+  with(as.list(c(state,parms)),{
+    Kplus = Kplus0 + a.k*(t^b.k)*exp(-c.k*t)
+    return(Kplus)
+  })
+  }
+  mSP_YFP <- function(t, state, parms) {
+  with(as.list(c(state,parms)), {
+    Y = Y0 + a*(t^b)*exp(-c*t)
+    return(Y) 
+  }) 
+  }
+  
+   function(t, state, parms){
+  with(as.list(c(state,parms)),{
+    dlp = Theta/N * (K_hi_mSP(t, NA, p_mSP_hi) - mSP_YFP(t, NA, p_mSP_YFP)*lp) - beta*lp + 2*p*(1-lp)
+    dN = Theta*mSP_YFP(t, NA, p_mSP_YFP) +N*(p - mu) 
+    return(list(c(dlp,  dN)))
+  })
+   }
+  
+}
+```
+
+```{r} 
+fun_log <- function (x){ 
+  return(log(x))
+}
+```
+
+
+```{r}
+load(file = "../data/DataObjects/final_data_flow_model.RData")
+load(file = "../data/DataObjects/final_data_flow_model_v2.RData")
+
+```
+
+Extracting Ki67_YFP fractions and YFP cell numbers in periphery 
+
+```{r}
+
+test <- map_depth(final_data_flow_model, 2,~do.call(rbind,.) )
+N.and.lp <- map(test, ~merge(.[["Ki67_YFP_frac"]], .[["cell_numbers_YFPpos"]], by = c("time", "celltype")))
+N.and.lp <- map2(N.and.lp, names(N.and.lp), ~ mutate(.x, ID = .y))
+test <- do.call(rbind,N.and.lp)
+N.and.lp <- test %>% group_by(celltype) %>% group_split()
+names(N.and.lp) <- c("CD4", "CD8")
+
+N.and.lp <- map(N.and.lp, ~ mutate(., lp = norm_frac_Ki67_YFP, .keep = "unused")%>% 
+                          mutate(., N = cell_number_tot, .keep = "unused") )
+
+N.and.lp = map(N.and.lp, ~mutate(., ID= as.numeric(ID)) %>%
+                          filter(., time>=0 & time<80 &!is.na(lp) & !lp == 0) %>%
+                          select(., c("time","lp", "N", "ID" )) %>%
+                          data.frame(.))
+
+# for fitting, subtract 4 from time, so we start at zero, and remove the ID variable
+N.and.lp.for.fitting <- map(N.and.lp, ~ mutate(., time = time - 4) %>% select( ., -ID))
+```
+
+
+```{r}
+
+
+
+s <- c(lp = 0.2, N = 1.5e4)
+p <- list("CD4" = c("Theta" = 0.5, "mu" = 0.02, "beta" = 0.3, "p" = 0),
+          "CD8" = c("Theta" = 0.5, "mu" = 0.02, "beta" = 0.3, "p" = 0))
+
+free <- list("CD4" = c("Theta", "mu", "beta", "lp", "N"),
+             "CD8" = c("Theta", "mu", "beta", "lp", "N"))
+
+lower  = list("CD4" = c(rep(0.01, 3), 0.001, 10),
+              "CD8" = c(rep(0.01, 3), 0.001, 10)
+)
+
+upper = list("CD4" = c(rep(2,3) , 1, 1e5),
+             "CD8" = c(rep(2,3) , 1, 1e5))
+
+flow_frac_pzero <- map2(N.and.lp.for.fitting, 
+                      names(N.and.lp.for.fitting), ~fit(.x, 
+                                                         parms = p[[.y]],
+                            odes = flow_frac_model(.y),
+                               free = free[[.y]],
+                               #fun = fun_rec, 
+                            fun = fun_log,
+                            method = "Pseudo",
+                            show = "lp",
+                            ymax = 1,
+                            bootstrap = nboots, 
+                            lower  = lower[[.y]],
+                            upper = upper[[.y]]))
+
+```
+
+
+```{r}
+save(flow_frac_pzero, file = "DataObjects/flow_frac_pzero.RData")
+```
+
+
+```{r}
+# generate model predictions
+
+# we haven't estimated p, so it doesn't appear in the parameter list of the fit. But we need it to run the model  - so add p=0 to the parameter lists
+flow_frac_pzero_paras <- list("CD4" = c(flow_frac_pzero[["CD4"]][["par"]], "p"=0), "CD8" = c(flow_frac_pzero[["CD8"]][["par"]], "p"=0))
+save(flow_frac_pzero_paras, file = "parameters/flow_frac_pzero_paras.RData")
+
+flow_frac_pzero_table <- map(names(flow_frac_pzero), ~run(tmax=80, tstep=0.1, odes = flow_frac_model(.),
+                                        parms = flow_frac_pzero_paras[[.]], 
+                                        table = TRUE, 
+                                        state = flow_frac_pzero_paras[[.]][c("lp", "N")]))
+
+flow_frac_pzero_table <- map(flow_frac_pzero_table, ~mutate(.,time = time+4))
+
+flow_frac_pzero_table <- map2(N.and.lp, flow_frac_pzero_table , ~merge(.x,.y, by = "time", all = TRUE)) %>%
+  map(~mutate(., lp_data = lp.x, lp_model = lp.y,
+              N_data = N.x, N_model = N.y,
+              .keep = "unused"))
+
+flow_frac_pzero_table <- rbind(cbind(flow_frac_pzero_table[[1]],   "cell" = rep("CD4", nrow(flow_frac_pzero_table[[1]]))),
+                              cbind(flow_frac_pzero_table[[2]],  "cell" = rep("CD8", nrow(flow_frac_pzero_table[[2]]))))
+
+# rename cell to receptor
+flow_frac_pzero_table <-flow_frac_pzero_table %>% rename(receptor=cell)
+
+write_rds(flow_frac_pzero_table, file = "../scripts_figures/flow_frac_pzero_table.Rds")
+
+```
+
+```{r}
+flow_frac_pzero_paras_long<- rbind(c(flow_frac_pzero_paras[["CD4"]], "receptor"  = "CD4"),
+                         c(flow_frac_pzero_paras[["CD8"]], "receptor" = "CD8" )
+)
+
+write.csv(flow_frac_pzero_paras_long, file = "parameters/flow_model_pzero_parameters.csv")
+```
+
+```{r}
+save.image("DataObjects/flow_model_pzero.RData")
+```
+
+
+
+
+

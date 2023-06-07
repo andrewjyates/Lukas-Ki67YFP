@@ -1,0 +1,297 @@
+---
+title: "fig 8"
+output: html_notebook
+---
+
+```{r}
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+
+packages <- c("tidyverse", "ggplot2", "cowplot") 
+
+tmp=lapply(packages, require, character.only = TRUE)
+load(file =  "../data/DataObjects/CD4_CD8.RData")
+
+```
+
+```{r}
+
+ggplot_scientific_notation_axes_labels <- function(l) {
+  # 'prettyNum' puts things into scientific notation when digit strings get past a certain length,
+  # but keeps things  >0.0001 and < 10^7 in non-sci notation
+  l <- prettyNum(l)
+  # … but for axis labels, we want to switch to powers of 10 for anything >=10^3 or < 0.01
+  # (though you decide)
+  for(i in 1:length(l)){
+    number=eval(parse(text=l)[i])
+    if(!is.na(number) & (number<0.001 | number>=1000)) l[i]=format(number, scientific=TRUE)
+  }
+  # quote the part before the exponent to keep all the digits
+  l <- gsub("^(.*)e", "'\\1'e", l)
+  # remove + after exponent, if exists. E.g.: (e^+2 -> e^2)
+  l <- gsub("e\\+","e",l)  
+  l <- gsub("e0","e",l)  
+  l <- gsub("e-0","e-",l) 
+  # turn the 'e' into plotmath format
+  l <- gsub("e", "%*%10^", l)
+  # convert 1x10^ or 1.000x10^ -> 10^
+  l <- gsub("\\'1[\\.0]*\\'\\%\\*\\%", "", l)
+  # convert 0.000.. * 10^x to 0
+  l <- gsub("\\'0[\\.0]*\\'\\%\\*\\%", "", l)
+  l <- gsub("10\\^0", "0", l)
+  # return this as an expression
+  parse(text=l)
+}
+
+
+plotwidth=9
+smaller.font.size=16
+larger.font.size=18
+panel.label.size = 21
+golden.ratio=1.618
+```
+
+
+```{r}
+frac_Ki67_mSP <- map(CD4_CD8, ~.[["perc Ki67 - all cells"]][["TH"]]) %>% 
+  map(~filter(., grepl("mat", celltype)) %>% 
+        mutate(., k = cell_number/100, .keep = "unused"))
+
+count_mSP <- map(CD4_CD8, ~.[["cell-numbers-all"]][["TH"]]) %>% 
+  map(~filter(., grepl("mat", celltype)) %>% 
+        mutate(., S = cell_number, .keep = "unused"))
+```
+
+
+```{r}
+load("../data/DataObjects/final_data_flow_model_v2.RData")
+
+count_nai <- map_depth(final_data_flow_model_v2, 2, ~do.call(rbind,.))
+count_nai <- map(count_nai, ~.$cell_numbers_all)
+count_nai <- map(count_nai, ~mutate(., N = cell_number_tot, .keep = "unused"))
+count_nai <- map2(count_nai, names(count_nai),~mutate(.x,ID = .y) )
+count_nai <- do.call(rbind, count_nai)
+count_nai<- count_nai %>% group_by(celltype) %>% group_split()
+names(count_nai) <- c("CD4", "CD8")
+
+
+#----- 
+frac_Ki67_nai <- map_depth(final_data_flow_model_v2, 2, ~do.call(rbind,.))
+frac_Ki67_nai <- map(frac_Ki67_nai, ~.$Ki67_frac)
+frac_Ki67_nai <- map(frac_Ki67_nai, ~mutate(., kn = norm_frac_Ki67, .keep = "unused"))
+frac_Ki67_nai <- map2(frac_Ki67_nai, names(frac_Ki67_nai),~mutate(.x,ID = .y) )
+frac_Ki67_nai <- do.call(rbind, frac_Ki67_nai)
+frac_Ki67_nai<- frac_Ki67_nai %>% group_by(celltype) %>% group_split()
+names(frac_Ki67_nai) <- c("CD4", "CD8")
+
+```
+
+
+```{r}
+
+data_for_prediction <- map2(frac_Ki67_mSP, count_mSP, ~merge(.x[c("ID", "k", "time")],.y[c("ID", "S", "time")], by = c("time","ID"),all = TRUE)) %>% 
+  map2(count_nai, ~merge(.x,.y, by = c("time","ID"),all = TRUE)) %>% 
+  map2(frac_Ki67_nai, ~merge(.x,.y, by = c("time","ID", "celltype"),all = TRUE))
+
+# Mouse numbers are potentially different if there are zero values for some animals?
+num.mice.CD4=length(unique(data_for_prediction[["CD4"]]$ID))
+num.mice.CD8=length(unique(data_for_prediction[["CD8"]]$ID))
+
+num.mice=num.mice.CD4
+```
+
+```{r}
+
+# Load the p=0 fit parameters. We'll keep "p" in what follows, but they will all be zeroes.
+
+load("../fitting/DataObjects/flow_sim_frac_pzero.RData")
+
+parms_frac <- map(flow_sim_frac_pzero, ~c("beta" = .[["par"]][["beta"]],
+                                "Theta" = .[["par"]][["Theta"]],
+                                "p" = 0))
+
+split <- function(x){
+  x%>% group_by(ID) %>% group_split()
+}
+data_for_prediction <- map(data_for_prediction, ~split(.) %>% {names(.) = 1:num.mice;.})
+data_for_prediction <- map_depth(data_for_prediction, 2, ~as.data.frame(.))
+parms_frac_bootstrap <- map(flow_sim_frac_pzero, ~.$bootstrap[,c("Theta", "beta")])
+test <- map2(parms_frac_bootstrap,data_for_prediction, function(a,b) map(b, function(c) merge(a,c)))
+
+```
+
+
+```{r}
+prediction <- function(data, parms){
+  kn = parms[["Theta"]] * data$k * data$S * (1/data$N) * (1/parms[["beta"]]) # no p here
+  return(data.frame("time" = data$time, "ID" = data$ID,"kn_prediction" = kn))
+}
+
+prediction <- function(x){
+  m = x$Theta * x$k* x$S * (1/x$N) * (1/x$beta) 
+  d = m - x$kn
+  frac.diff = d/x$kn
+  return(data.frame("time" = x$time, "ID" = x$ID,"kn_prediction" = m, "difference" = d, "frac.difference" = frac.diff, "data" = x$kn))
+}
+```
+
+```{r}
+prediction_frac <- map(test, function(a) map(a, function(b) prediction(b)))
+prediction_frac <- map_depth(prediction_frac, 2, ~filter(., !is.na(kn_prediction)))
+cond <- map(prediction_frac, function(a) sapply(a, function(x) nrow(x) > 3))
+prediction_frac <- map2(prediction_frac, cond,~.x[.y])
+```
+
+```{r}
+
+#v_d <- map_depth(prediction_frac, 2,~as.list(.))
+v_d <- map(prediction_frac, ~do.call(rbind,.))
+v_d <- map2(v_d,names(v_d), ~mutate(.x, receptor = .y))
+v_d <- map(v_d, ~filter(., !is.na(kn_prediction)))
+v_d <- map(v_d, ~filter(., !is.na(difference)))
+v_d <- rbind(v_d[[1]], v_d[[2]])
+```
+
+
+```{r}
+CIs_kn_pred <- function(x){
+    list("upper" = as.double(quantile(x$kn_prediction, 0.975)),
+      "lower" = as.double(quantile(x$kn_prediction, 0.025)),
+      "value" = median(x$kn_prediction),
+      "data" = unique(x$data),
+      "ID" = unique(x$ID),
+      "time" = x$time
+    
+  )
+}
+
+kn_Cis <- map_depth(prediction_frac, 2, ~CIs_kn_pred(.)) 
+kn_Cis <- map(kn_Cis,~do.call(rbind,.) %>% data.frame(.))
+kn_Cis <- map(kn_Cis, ~filter(.,!is.na(value)))
+kn_Cis <- map2(kn_Cis, names(kn_Cis), ~mutate(.x,receptor = .y))
+kn_Cis <- map(kn_Cis, ~cbind(.))
+kn_Cis <- do.call(rbind, kn_Cis)
+kn_Cis <- map(kn_Cis, ~unlist(.))
+
+# make dataframe with ID, receptor, kn_prediction, kn_lower, kn_upper, data, diff_pred, diff_pred_lower, diff_pred_upper
+
+andy_summary=data.frame(cbind(
+  kn_Cis$ID,
+  kn_Cis$time,
+  kn_Cis$receptor))
+
+andy_summary = cbind(andy_summary, 
+  kn_Cis$value,
+  kn_Cis$lower,
+  kn_Cis$upper,
+  kn_Cis$data,
+  kn_Cis$value - kn_Cis$data,
+  kn_Cis$lower - kn_Cis$data,
+  kn_Cis$upper - kn_Cis$data,
+  (kn_Cis$value - kn_Cis$data)/kn_Cis$data,
+  (kn_Cis$lower - kn_Cis$data)/kn_Cis$data,
+  (kn_Cis$upper - kn_Cis$data)/kn_Cis$data
+  )
+names(andy_summary) = c("MouseID", "time","receptor", "kn_prediction", "kn_lower", "kn_upper", "data", "diff_pred", "diff_pred_lower", "diff_pred_upper", "frac_diff_pred", "frac_diff_pred_lower", "frac_diff_pred_upper")
+
+andy_summary <- andy_summary[order(andy_summary$time),]
+```
+
+
+```{r}
+
+library(forcats)
+colors <- c("Prediction" = "#34495E", "Data" = "#6DA75C")
+
+prediction_Ki67diff_plot <- ggplot(andy_summary)+
+  geom_hline(yintercept = 0, color="black") + 
+  geom_linerange(aes(ymin = diff_pred_lower, ymax = diff_pred_upper, x = fct_inorder(MouseID)),  color="grey70", linewidth=0.5, alpha = 0.2) +
+  geom_point(aes(y=diff_pred, x = MouseID), color = "darkorange", size=1.5)+
+  facet_wrap(~receptor)+
+  ggtitle("Absolute difference in Ki67+ proportion (predicted - observed)") + 
+  labs(y = NULL, x = "Mouse")+
+  theme_bw() +
+  theme(axis.text.x = element_blank(), axis.ticks.x =element_blank(),
+        panel.grid.major.x = element_blank(), panel.grid.minor.x = element_blank(),
+      axis.text=element_text(size=smaller.font.size),
+      axis.title.y=element_text(size=larger.font.size),
+      axis.title.x=element_text(size=larger.font.size,margin = margin(t = 10, r = 0, b = 0, l = 0)),
+      plot.title = element_text(hjust = 0.5, face="bold", size=larger.font.size),
+      text = element_text(family = "Helvetica", size = larger.font.size),
+      legend.position = "bottom",
+      legend.key = element_rect(fill = "transparent"),
+      strip.background = element_rect(color = "black", fill = "#FBFCFC"),
+      strip.text = element_text(face = "bold")
+      )
+
+
+prediction_Ki67fracdiff_plot <- ggplot(andy_summary)+
+  geom_hline(yintercept = 0, color="black") + 
+  geom_linerange(aes(ymin = frac_diff_pred_lower, ymax = frac_diff_pred_upper, x = fct_inorder(MouseID)),  color="grey70", linewidth=0.5, alpha = 0.2) + 
+  geom_point(aes(y=frac_diff_pred, x = MouseID), color = "darkorange", size=1.5)+
+  facet_wrap(~receptor)+
+  ggtitle("Fractional difference in Ki67+ proportion (predicted - observed)") + 
+  labs(y = NULL, x = "Mouse")+
+  theme_bw() +
+  theme(axis.text.x = element_blank(), axis.ticks.x =element_blank(),
+        panel.grid.major.x = element_blank(), panel.grid.minor.x = element_blank(),
+      axis.text=element_text(size=smaller.font.size),
+      axis.title.y=element_text(size=larger.font.size),
+      axis.title.x=element_text(size=larger.font.size,margin = margin(t = 10, r = 0, b = 0, l = 0)),
+      plot.title = element_text(hjust = 0.5, face="bold", size=larger.font.size),
+      text = element_text(family = "Helvetica", size = larger.font.size),
+      legend.position = "bottom",
+      legend.key = element_rect(fill = "transparent"),
+      strip.background = element_rect(color = "black", fill = "#FBFCFC"),
+      strip.text = element_text(face = "bold")
+      )
+
+fig_9 <- plot_grid(
+  prediction_Ki67diff_plot, prediction_Ki67fracdiff_plot,  align = "hv",
+  labels = c("A", "B"), nrow = 2,  label_size = panel.label.size)
+
+pdf("../figures/fig_9.pdf", width=plotwidth, height=plotwidth*0.9)#/golden.ratio)
+print(fig_9)
+dev.off()
+pdf("../../Manuscript/PaperFigures/Figure-9.pdf", width=plotwidth, height=plotwidth*0.9)#/golden.ratio)
+print(fig_9)
+dev.off()
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,351 @@
+---
+title: "simple model together"
+output: html_notebook
+---
+
+```{r setup}
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+```
+
+
+```{r}
+packages <- c("tidyverse", "ggplot2") 
+tmp=lapply(packages, require, character.only = TRUE)
+```
+
+
+EVA'S VERSION
+```{r}
+source("grind.R")
+#load("DataObjects/simple_model_together.RData")
+load(file =  "../data/DataObjects/CD4_CD8.RData")
+load(file = "../data/DataObjects/final_data_simple_model.RData")
+
+nboots=500
+```
+
+
+1. Simple model for the cell count of YFP expressing naive T cells 
+
+```{r}
+YFP_matSP <- map(CD4_CD8, ~.[["cell-numbers-YFPpos"]][["TH"]]) %>% 
+  map(~filter(., grepl("mat", celltype)))  %>% 
+  map(~select(., c("time", "cell_number","ID"))) %>% 
+  map(~arrange(., ID))
+
+YFP_matSP_fitting <- map(YFP_matSP, ~  mutate(.,time = time - 4))
+```
+
+```{r}
+YFP_nai <- map(final_data_simple_model, ~.[["cell_numbers_YFPpos"]])
+test <- map(YFP_nai, ~do.call(rbind,.))  
+
+test <- map2(test, names(test), ~ mutate(.x, ID = as.factor(.y)))
+
+test <- do.call(rbind, test)
+YFP_nai <- test %>% group_by(celltype) %>% group_split()
+names(YFP_nai) <- c("CD4", "CD8")
+
+YFP_nai_fitting <- map(YFP_nai, ~ mutate(., time = time - 4) %>% 
+                          mutate(., N = cell_number_tot)%>%
+                          filter(., time < 80) %>% 
+                         select(., c("time", "ID", "N")))
+
+YFP_nai <- map(YFP_nai, ~ mutate(., N = cell_number_tot)%>% 
+                         select(., c("time", "ID", "N")))
+```
+
+
+
+
+```{r}
+YFP <- map2(YFP_matSP, YFP_nai, ~ merge(.x,.y, by = c("time", "ID"), all = TRUE)) %>%
+  map(~mutate(., M = cell_number, .keep = "unused"))
+
+save(YFP,file = "../data/DataObjects/final_data_simple_sim_model.RData")
+
+
+YFP_fitting <- map2(YFP_matSP_fitting, YFP_nai_fitting, ~ merge(.x,.y, by = c("time", "ID"), all = TRUE))  %>%
+  map(~mutate(., M = cell_number, .keep = "unused")) 
+
+YFP_fitting <- map(YFP_fitting, ~select(., c("time", "M", "N"))) %>% 
+  map(~filter(., !is.na(N) & !is.na(M))) %>% 
+  map(~data.frame(.)) %>%
+  map(~filter(., time < 80))
+
+```
+
+
+```{r}
+
+fun_log <- function (x){
+  x[x<0] <- 0
+  #print(x)
+  return(log(x))
+} #logit stretches out the data between 0 and 1
+
+```
+
+```{r}
+
+
+simultaneous_model <- function(t, state, parms) {
+  with(as.list(c(state,parms)), {
+    dM = (c*a*t^b- a*b*t^(b-1))/exp(c*t)
+    dN = Theta * M - mu*N
+    return(list(c(dM,dN))) 
+  }) 
+}
+
+
+```
+
+
+```{r}
+
+load(file = "parameters/p_YFP_mSP_EVA.RData")
+
+```
+
+```{r}
+
+print("Fitting and bootstrapping model of timecourse of naive YFP+ T cell counts")
+
+simultaneous_fit <- map2(YFP_fitting, p_YFP_mSP,  ~fit(datas = .x, 
+              parms = c(.y[c("a","b","c")], "Theta" = 0.4, "mu" = 0.03), 
+              state = c("M" = 1000,"N" = 15000), 
+              free = c("a", "b","c", "Theta","mu", "M", "N"),
+              odes = simultaneous_model,
+              method = "Pseudo",
+              lower = c("a" = -20000, "b" = 1.0001,"c" = 0.01, "Theta" = 0.01, "mu" = 0.001, "M" = 1000, "N" = 1000), # b cannot be smaller 1 
+              upper = c("a" = -500, "b" = 2,"c" =0.5, "Theta" = 2, "mu" = 1, "M" = 1000000, "N" = 1000000),
+              bootstrap = nboots,
+              #bootstrap.residuals=TRUE,
+              fun = fun_log))
+
+shapiro <- map(simultaneous_fit, ~shapiro.test(.[["residuals"]]))
+
+simple_sim_abs <- simultaneous_fit
+save(simple_sim_abs, file = "DataObjects/simple_sim_abs.Rdata")
+```
+
+
+
+
+```{r}
+
+simultaneous_abs_parms <- map(simultaneous_fit, ~.[["par"]])
+
+simultaneous_table <- map(simultaneous_abs_parms,~run(tmax = 80, 
+                                                      parms = ., 
+                                                      state = .[c("M", "N")], 
+                                                      odes = simultaneous_model,
+                                                      table = TRUE)
+)
+
+simultaneous_table <- map(simultaneous_table, ~mutate(.,time = time+4))
+
+
+data_fit <- map2(simultaneous_table, YFP, ~merge(.x,.y, by = "time", all = TRUE)) %>% 
+  map(~mutate(.,M_model = M.x, M_data = M.y, N_model = N.x, N_data = N.y, .keep = "unused"))%>% 
+  map(~mutate(., M_residuals = log(M_model) - log(M_data), N_residuals = log(N_model) - log(N_data)))
+
+
+```
+
+
+```{r}
+data_fit_long <- rbind(cbind(data_fit[["CD4"]], "receptor" = rep("CD4", nrow(data_fit[["CD4"]]))),
+                       cbind(data_fit[["CD8"]], "receptor" = rep("CD8", nrow(data_fit[["CD8"]]))))
+
+
+simple_model_together_abs_table <- data_fit_long
+write_rds(simple_model_together_abs_table, file = "../scripts_figures/simple_model_together_abs_table.Rds")
+```
+
+
+
+2. For the frequency of YFP expression in naive T cells 
+
+```{r}
+YFP_nai_frac <- map(final_data_simple_model, ~.[["YFP_frac"]])
+test <- map(YFP_nai_frac, ~do.call(rbind,.))
+
+test <- map2(test, names(test), ~ mutate(.x, ID = as.factor(.y)))
+
+test <- do.call(rbind, test)
+YFP_frac <- test %>% group_by(celltype) %>% group_split()
+names(YFP_frac ) <- c("CD4", "CD8")
+
+YFP_nai_frac <- map(YFP_frac, ~ mutate(., l = norm_frac_YFP)%>%
+                          filter(., time < 80) %>% 
+                          select(., c("time", "l", "ID")))
+
+YFP_nai_frac_fitting <-map(YFP_nai_frac, ~mutate(., time = time - 4) )
+
+YFP_nai_frac <- map2(YFP_matSP, YFP_nai_frac, ~ merge(.x,.y, by = c("time", "ID"), all = TRUE)) %>% 
+  map(~mutate(., M = cell_number, .keep = "unused"))
+
+
+
+YFP_nai_frac_fitting <- map2(YFP_matSP_fitting, YFP_nai_frac_fitting, ~ merge(.x,.y, by = c("time", "ID"), all = TRUE)) %>% 
+  map(~mutate(., M = cell_number, .keep = "unused")) %>% 
+  map(~select(., c("time", "l", "M", "ID")))
+```
+
+
+```{r}
+nai <- map(final_data_simple_model, ~.[["cell_numbers_all"]])
+test <- map(nai, ~do.call(rbind,.))
+
+test <- map2(test, names(test), ~ mutate(.x, ID = as.factor(.y)))
+
+test <- do.call(rbind, test)
+nai<- test %>% group_by(celltype) %>% group_split()
+names(nai) <- c("CD4", "CD8")
+
+nai_fitting<- map(nai, ~ mutate(., time = time - 4) %>% 
+                          mutate(., N = cell_number_tot, .keep = "unused")%>%
+                          filter(., time < 80) )
+
+nai <- map(nai, ~ mutate(., N = cell_number_tot, .keep = "unused"))
+```
+
+
+```{r}
+
+YFP_Z <- map2(YFP_nai_frac, nai, ~ merge(.x,.y, all = TRUE)) %>% 
+  map(~mutate(., Z = M/N))
+
+YFP_Z_fitting <- map2(YFP_nai_frac_fitting, nai_fitting, ~ merge(.x,.y, all = TRUE))  %>% 
+  map(~mutate(., Z = M/N)) %>% 
+  map(~select(., c("time", "Z", "l"))) %>% 
+  map(~filter(., time < 80)) %>% 
+  map(~filter(., !is.na(l) & !is.na(Z)))
+
+
+```
+
+
+```{r}
+load(file = "parameters/p_Z_mSP_EVA.RData") 
+
+simulultaneous_frac <- function(t, state, parms){
+  with(as.list(c(state, parms)),{
+    dZ = -((a + b)*exp(a*t + (t - tau)*v)*(1 + exp((t - tau)*v))^(-1 - (a + b)/v)*Z0) + a*exp(a *t)*(1 + exp((t - tau)*v))^(-((a + b)/v))*Z0
+    dl = Theta*Z  - mu*l
+      return(list(c(dZ, dl)))
+  })
+}
+
+
+```
+
+
+```{r}
+fun_logit <- function (x){
+  x[x<0] <- 0
+  #print(x)
+  return(log(x/(1-x)))
+}
+```
+
+
+```{r}
+
+# lower = list("CD4" = c("Z0" = 0.0001,"a" = 0.01,"b" = 0.01, "v" = 0.1, "tau" = 1),
+#              "CD8" = c("Z0" = 0.0001,"a" = 0.01,"b" = 0.01, "v" = 0.1, "tau" = 1))
+# 
+# upper = list("CD4" = c("Z0" = 0.05,"a" = 1.3,"b" = 0.6, "v" = 1.0, "tau" = 5),
+#              "CD8" = c("Z0" = 0.05,"a" = 1.2,"b" = 0.6, "v" = 1.0, "tau" = 5))
+# 
+# 
+
+print("Fitting and bootstrapping model of timecourse of naive YFP+ T cell frequencies")
+
+simultaneous_fit_frac <- map2(YFP_Z_fitting, p_Z_mSP,  ~fit(datas = .x, 
+              parms = c(.y, "Theta" = 0.001, 
+                        "mu" = 0.02), 
+              state = c("Z" = 0.001,
+                        "l" = 0.01), 
+              free = c("a","b","Theta","mu", "tau","Z", "l"),
+              odes = simulultaneous_frac,
+              method = "Pseudo",
+              lower =c("a" = 0.001,
+                       "b" = 0.001,
+                       "Theta" = 0.001,
+                       "mu" = 0.001, 
+                       "tau" = 1, 
+                       "Z" = 0.001, 
+                       "l" = 0.0001),
+              upper = c("a" = 5,
+                        "b" = 1.0,
+                        "Theta" = 1,
+                        "mu" = 0.5, 
+                        "tau" = 5, 
+                        "Z" = 1, 
+                        "l" = 1),
+              bootstrap = nboots,
+              #bootstrap.residuals=TRUE,
+              fun = fun_log
+))
+
+
+shapiro_frac <- map(simultaneous_fit_frac, ~shapiro.test(.[["residuals"]]))
+
+simple_sim_frac <- simultaneous_fit_frac
+save(simple_sim_frac, file = "DataObjects/simple_sim_frac.Rdata")
+```
+
+```{r}
+
+simultaneous_frac_parms <- map(simultaneous_fit_frac, ~c(.[["par"]], "tau" = 5))
+
+
+
+
+simultaneous_frac_table <- map2(simultaneous_frac_parms,p_Z_mSP,~run(tmax = 80, 
+                                                      parms = c(.x, .y["v"], .y["Z0"]), 
+                                                      state = .x[c("Z", "l")], 
+                                                      odes = simulultaneous_frac,
+                                                      table = TRUE)
+)
+
+simultaneous_frac_table <- map(simultaneous_frac_table, ~mutate(., time = time+4))
+
+data_fit_frac <- map2(simultaneous_frac_table, YFP_Z, ~merge(.x,.y, by = "time", all = TRUE))%>% 
+  map(~mutate(.,Z_model = Z.x, Z_data = Z.y, l_model = l.x, l_data = l.y, .keep = "unused"))%>% 
+  map(~mutate(., Z_residuals = fun_logit(Z_model) - fun_logit(Z_data), l_residuals = fun_logit(l_model) - fun_logit(l_data)))
+
+
+```
+
+```{r}
+data_fit_frac_long <- rbind(cbind(data_fit_frac[["CD4"]], "receptor" = rep("CD4", nrow(data_fit_frac[["CD4"]]))),
+                       cbind(data_fit_frac[["CD8"]], "receptor" = rep("CD8", nrow(data_fit_frac[["CD8"]]))))
+```
+
+
+```{r}
+simple_model_together_frac_table <- data_fit_frac_long
+write_rds(simple_model_together_frac_table, file = "../scripts_figures/simple_model_together_frac_table.Rds")
+```
+
+
+
+```{r}
+save.image("DataObjects/simple_model_together.RData")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
