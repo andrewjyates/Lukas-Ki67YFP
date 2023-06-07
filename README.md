@@ -1,7 +1,7 @@
 
 # Data and code required to reproduce all analyses and figures in
-# “Quantifying cellular dynamics in mice using a novel fluorescent division reporter system”
-# Eva Lukas, Thea Hogan,Cayman Williams, Benedict Seddon, Andrew J. Yates
+## “Quantifying cellular dynamics in mice using a novel fluorescent division reporter system”
+### Eva Lukas, Thea Hogan,Cayman Williams, Benedict Seddon, Andrew J. Yates
 
 
 ## Sequence of events:
@@ -25,9 +25,9 @@ Generates the data frames for all fitting:
 
 
 - Run Fitting D1, D2, D3 - Ki67 (“flow”) model with fixed thymic inputs Y(t) and K+(t) (eqn 5).
-	D1 - gets point estimates for the models with p free, and p set to zero
-	D2 - bootstraps for p free
-	D3 - bootstraps for p zero
+	-- D1 - gets point estimates for the models with p free, and p set to zero
+	-- D2 - bootstraps for p free
+	-- D3 - bootstraps for p zero
 
 - Make Figure 7 (flow model with fixed inputs). Also includes mouse age as point size.
 
