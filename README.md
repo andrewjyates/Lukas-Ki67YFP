@@ -25,17 +25,23 @@ Generates the data frames for all fitting:
 
 
 - Run Fitting D1, D2, D3 - Ki67 (“flow”) model with fixed thymic inputs Y(t) and K+(t) (eqn 5).
-	-- D1 - gets point estimates for the models with p free, and p set to zero
-	-- D2 - bootstraps for p free
-	-- D3 - bootstraps for p zero
+
+	D1 - gets point estimates for the models with p free, and p set to zero
+	
+	D2 - bootstraps for p free
+	
+	D3 - bootstraps for p zero
 
 - Make Figure 7 (flow model with fixed inputs). Also includes mouse age as point size.
 
 - Fitting E - Simple model, estimating thymus simultaneously 
 
 - Fitting F - Ki67 (flow) model, estimating thymus simultaneously
+	
 	F1 - gets point estimates for the models with p free, and p set to zero
+	
 	F2 - bootstraps for p free
+	
 	F3 - bootstraps for p zero
 
 - Fitting G - F tests, comparing improvement in fit by adding p in both Ki67 models.
