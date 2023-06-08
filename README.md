@@ -6,14 +6,12 @@
 
 ## Sequence of events:
 
-- Run data/Data Processing.Rmd
-
-Generates the data frames for all fitting:
+- Run data/Data Processing.Rmd. This formats the raw data into data frames used for all the fitting:
 "CD4_CD8","demog", "final_data_simple_model","final_data_flow_model","final_data_flow_model_v2"
 
 - Run fitting/Fitting A - Thymic Functions Y and Z.Rmd to get the empirical functions for Y(t) and Z(t)
 
-- Make Figure S.4 with this (.Rmd files for making figures are within the scripts_figures folder); plots Y(t) and Z(t), with data 
+- Make Figure S.4 with this (.Rmd files for making figures are within the scripts_figures folder); this plots Y(t) and Z(t), with data 
 
 - Run fitting/Fitting B - Simple model no Ki67.Rmd in the fitting folder  
 
