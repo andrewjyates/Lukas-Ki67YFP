@@ -1,8 +1,7 @@
 
 ## “Quantifying cellular dynamics in mice using a novel fluorescent division reporter system”
 ### Eva Lukas, Thea Hogan, Cayman Williams, Benedict Seddon, Andrew J. Yates
-## Data and code for analyses and generating figures
-### last updated 2023-06-08
+## Data and code for analyses and generating figures; last updated 2023-06-08
 
 ## Sequence of events:
 
